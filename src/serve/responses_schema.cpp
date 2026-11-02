@@ -613,14 +613,19 @@ void parse_reasoning(const Json& body, ResponsesRequest& out) {
     const Json& reasoning = body.at("reasoning");
     if (!reasoning.is_object()) { bad_request("reasoning must be an object", "reasoning"); }
     for (auto it = reasoning.begin(); it != reasoning.end(); ++it) {
-        // NOTE(local-v100 2026-10-29): "summary" asks for a reasoning summary in the response.
-        // NInfer emits its own reasoning deltas, so there is nothing to configure -- ignore the
-        // hint instead of failing clients (Codex-style harnesses) that always send it.
-        const bool ignorable = it.key() == "summary";
-        if (it.key() != "effort" && !ignorable && !it.value().is_null()) {
+        // NOTE(local-v100 2026-11-02): accept `summary` here and validate it below; other
+        // keys stay strict. Clients (DSH, Codex-style harnesses) send summary:auto every turn.
+        if (it.key() != "effort" && it.key() != "summary" && !it.value().is_null()) {
             bad_request("reasoning." + it.key() + " is not supported", "reasoning",
                         "reasoning_option_not_supported");
         }
+    }
+    if (reasoning.contains("summary") && !reasoning.at("summary").is_null()) {
+        const auto& summary = reasoning.at("summary");
+        if (!summary.is_string()) {
+            bad_request("reasoning.summary must be a string", "reasoning.summary");
+        }
+        out.reasoning_summary = summary.get<std::string>();
     }
     if (!reasoning.contains("effort") || reasoning.at("effort").is_null()) { return; }
     if (!reasoning.at("effort").is_string()) {
@@ -723,9 +728,10 @@ void reject_server_managed_features(const Json& body) {
     if (body.contains("include") && !body.at("include").is_null()) {
         if (!body.at("include").is_array()) { bad_request("include must be an array", "include"); }
         // NOTE(local-v100 2026-10-29): 'include' only requests EXTRA fields in the response
-        // (reasoning.encrypted_content, message.output_text.logprobs, ...). NInfer never emits
-        // them, so the honest behaviour is to ignore the hint rather than fail the whole call --
-        // any client that ships a default non-empty include list is otherwise unusable here.
+        // (reasoning.encrypted_content, message.output_text.logprobs, ...). NInfer emits only the
+        // null `reasoning.encrypted_content` placeholder, so ignore unknown entries rather than
+        // fail the whole call -- any client shipping a default non-empty include list would
+        // otherwise be unusable here.
         for (const Json& entry : body.at("include")) {
             if (!entry.is_string()) {
                 bad_request("include must be an array of strings", "include");
@@ -813,6 +819,12 @@ ResponsesRequest parse_request_impl(const Json& body, const RequestLimits& limit
         bad_request("missing required field: model", "model");
     }
     out.generation.model = body.at("model").get<std::string>();
+    if (body.contains("prompt_cache_key") && !body.at("prompt_cache_key").is_null()) {
+        if (!body.at("prompt_cache_key").is_string()) {
+            bad_request("prompt_cache_key must be a string", "prompt_cache_key");
+        }
+        out.prompt_cache_key = body.at("prompt_cache_key").get<std::string>();
+    }
     if (!body.contains("input")) { bad_request("missing required field: input", "input"); }
     parse_input(body.at("input"), out);
 
@@ -909,7 +921,7 @@ Json response_common(const std::string& id, std::int64_t created_at,
         {"effort", request.generation.reasoning_effort
                        ? Json(requested_reasoning_effort_name(*request.generation.reasoning_effort))
                        : Json(nullptr)},
-        {"summary", nullptr}};
+        {"summary", request.reasoning_summary ? Json(*request.reasoning_summary) : Json(nullptr)}};
     return Json{
         {"id", id},
         {"object", "response"},
@@ -923,6 +935,7 @@ Json response_common(const std::string& id, std::int64_t created_at,
         {"parallel_tool_calls", true},
         {"previous_response_id",
          request.previous_response_id ? Json(*request.previous_response_id) : Json(nullptr)},
+        {"prompt_cache_key", request.prompt_cache_key ? Json(*request.prompt_cache_key) : Json(nullptr)},
         {"reasoning", reasoning},
         {"service_tier", "default"},
         {"store", request.store},
@@ -952,6 +965,7 @@ BuiltResponse build_response(const std::string& id, std::int64_t created_at,
                  {"type", "reasoning"},
                  {"status", reasoning_status},
                  {"summary", Json::array()},
+                 {"encrypted_content", nullptr},
                  {"content",
                   Json::array({Json{{"type", "reasoning_text"}, {"text", outcome.reasoning}}})}});
     }
@@ -1141,6 +1155,7 @@ public:
                              {"type", "reasoning"},
                              {"status", "in_progress"},
                              {"summary", Json::array()},
+                             {"encrypted_content", nullptr},
                              {"content", Json::array()}};
         const Json part   = {{"type", "reasoning_text"}, {"text", ""}};
         return {sse(event("response.output_item.added",
@@ -1161,6 +1176,7 @@ public:
                            {"type", "reasoning"},
                            {"status", item_status},
                            {"summary", Json::array()},
+                           {"encrypted_content", nullptr},
                            {"content", Json::array({part})}};
         return {sse(event("response.reasoning_text.done", Json{{"item_id", ids.reasoning},
                                                                {"output_index", reasoning_index},
