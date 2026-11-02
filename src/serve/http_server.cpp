@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <cstdio>
 #include <chrono>
 #include <exception>
 #include <memory>
@@ -367,6 +368,15 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
         ApiError error;
         error.status  = 400;
         error.message = "request body is not valid JSON";
+        // Diagnostics: a rejected parse never reaches the request log, which left the hermes
+        // 400 unexplained on 2026-11-02. Print size and both ends so NaN/Infinity literals or a
+        // truncated body are identifiable from journalctl alone.
+        std::fprintf(stderr, "[ninfer-serve] chat body is invalid JSON, %zu bytes\n",
+                     req.body.size());
+        std::fprintf(stderr, "  head: %.400s\n", req.body.c_str());
+        if (req.body.size() > 400) {
+            std::fprintf(stderr, "  tail: %s\n", req.body.c_str() + req.body.size() - 300);
+        }
         write_error(res, error);
         return;
     }
@@ -386,7 +396,22 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
             throw ApiException(std::move(error));
         }
     } catch (const ApiException& e) {
-        write_error(res, e.error());
+        const ApiError& err = e.error();
+        // Diagnostics: same gap as the JSON path -- schema rejections on the Chat Completions
+        // endpoint were answered with a 400 but never logged, so the client's "Error code: 400"
+        // with no body had no server-side trace.
+        std::fprintf(stderr,
+                     "[ninfer-serve] chat request rejected: status=%d param=%s code=%s "
+                     "message=%s messages=%zu tools=%zu body=%zu bytes\n",
+                     err.status, err.param.c_str(), err.code.c_str(), err.message.c_str(),
+                     body.contains("messages") && body.at("messages").is_array()
+                         ? body.at("messages").size()
+                         : static_cast<std::size_t>(0),
+                     body.contains("tools") && body.at("tools").is_array()
+                         ? body.at("tools").size()
+                         : static_cast<std::size_t>(0),
+                     req.body.size());
+        write_error(res, err);
         return;
     }
 
