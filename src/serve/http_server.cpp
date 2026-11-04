@@ -274,8 +274,29 @@ void HttpServer::register_routes() {
             }
         });
 
-    server_.Get("/health", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(nlohmann::json{{"status", "ok"}}.dump(), "application/json");
+    // Liveness probe that doubles as capability discovery: a client that holds only the base URL
+    // must be able to size its prompt (max_context), learn the public model id, and decide whether
+    // images are accepted. Key set mirrors the Strata /health this deployment is benchmarked
+    // against, plus the two run-shape fields a dual-card host cannot otherwise infer. `api_key` is
+    // deliberately a flag, never the value.
+    server_.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
+        nlohmann::json body{{"status", "ok"}};
+        if (service_ != nullptr) {
+            const ModelResidency residency = service_->model_residency();
+            body["service"]                 = "ninfer";
+            body["model"]                   = public_model_id_;
+            body["max_context"]             = options_.max_context;
+            body["images"]                  = options_.enable_vision;
+            body["image_generation"]        = false;
+            body["api_key"]                 = !options_.api_key.empty();
+            // The route is only reachable after attach() and warmup, so the weights are loaded;
+            // `residency` separates GPU-resident service from a deliberate offload to host RAM.
+            body["loaded"]          = true;
+            body["residency"]       = residency.state;
+            body["max_concurrency"] = options_.max_concurrency;
+            body["tp"]              = options_.tp;
+        }
+        res.set_content(body.dump(), "application/json");
     });
     const auto residency_response = [this](httplib::Response& res) {
         const auto state = service_->model_residency();
