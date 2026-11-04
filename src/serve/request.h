@@ -143,15 +143,55 @@ enum class RequestedReasoningEffort : std::uint8_t {
     Max,
 };
 
+// Comparison is ASCII case-insensitive and ignores surrounding whitespace: client
+// settings fields routinely send " HIGH " where the wire contract spells "high".
+[[nodiscard]] constexpr bool equals_ascii_case_insensitive(std::string_view left,
+                                                           std::string_view right) noexcept {
+    if (left.size() != right.size()) { return false; }
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        char a = left[i];
+        char b = right[i];
+        if (a >= 'A' && a <= 'Z') { a = static_cast<char>(a - 'A' + 'a'); }
+        if (b >= 'A' && b <= 'Z') { b = static_cast<char>(b - 'A' + 'a'); }
+        if (a != b) { return false; }
+    }
+    return true;
+}
+
+[[nodiscard]] constexpr std::string_view
+trim_ascii_whitespace_view(std::string_view value) noexcept {
+    const auto is_space = [](char c) noexcept {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+    };
+    while (!value.empty() && is_space(value.front())) { value.remove_prefix(1); }
+    while (!value.empty() && is_space(value.back())) { value.remove_suffix(1); }
+    return value;
+}
+
+// The vocabulary client UIs actually send: the protocol values plus the aliases
+// Strata accepts (off/disabled/false mean thinking off, maximum means max).  The
+// graded mapping (high/max -> xhigh, minimal -> thinking off) happens in
+// translate.cpp so every endpoint resolves the words the same way.
 [[nodiscard]] constexpr std::optional<RequestedReasoningEffort>
 parse_requested_reasoning_effort(std::string_view value) noexcept {
-    if (value == "none") { return RequestedReasoningEffort::None; }
-    if (value == "minimal") { return RequestedReasoningEffort::Minimal; }
-    if (value == "low") { return RequestedReasoningEffort::Low; }
-    if (value == "medium") { return RequestedReasoningEffort::Medium; }
-    if (value == "high") { return RequestedReasoningEffort::High; }
-    if (value == "xhigh") { return RequestedReasoningEffort::XHigh; }
-    if (value == "max") { return RequestedReasoningEffort::Max; }
+    value = trim_ascii_whitespace_view(value);
+    if (equals_ascii_case_insensitive(value, "none") ||
+        equals_ascii_case_insensitive(value, "off") ||
+        equals_ascii_case_insensitive(value, "disabled") ||
+        equals_ascii_case_insensitive(value, "false")) {
+        return RequestedReasoningEffort::None;
+    }
+    if (equals_ascii_case_insensitive(value, "minimal")) {
+        return RequestedReasoningEffort::Minimal;
+    }
+    if (equals_ascii_case_insensitive(value, "low")) { return RequestedReasoningEffort::Low; }
+    if (equals_ascii_case_insensitive(value, "medium")) { return RequestedReasoningEffort::Medium; }
+    if (equals_ascii_case_insensitive(value, "high")) { return RequestedReasoningEffort::High; }
+    if (equals_ascii_case_insensitive(value, "xhigh")) { return RequestedReasoningEffort::XHigh; }
+    if (equals_ascii_case_insensitive(value, "max") ||
+        equals_ascii_case_insensitive(value, "maximum")) {
+        return RequestedReasoningEffort::Max;
+    }
     return std::nullopt;
 }
 
@@ -189,8 +229,6 @@ struct GenerationRequest {
     bool include_usage  = false;
     std::optional<bool> enable_thinking; // non-standard extension; falls back to server default
     std::optional<RequestedReasoningEffort> reasoning_effort;
-    // Responses effort levels describe intent; translate them to the loaded Qwen template.
-    bool map_responses_reasoning_effort = false;
     std::string reasoning_effort_param = "reasoning_effort";
     std::optional<bool> preserve_thinking;
     bool preserve_thinking_semantic_change = false;

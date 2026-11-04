@@ -233,15 +233,21 @@ artifact template's existing tool/reasoning-instruction composition.
 At startup, NInfer resolves prompt capabilities from the exact `frontend/chat_template.jinja`
 resource embedded in the loaded artifact. It does not infer them from the request's `model` field,
 the artifact identity, or a target profile. A recognized effort-capable template exposes `low`,
-`medium`, and `xhigh`; omitting effort uses that template's declared default. After any
-protocol-specific mapping described below, an effort not exposed by the loaded template
-returns HTTP 400 with code `reasoning_effort_not_supported` before prompt preparation.
+`medium`, and `xhigh`; omitting effort uses that template's declared default. An effort the
+loaded template cannot represent returns HTTP 400 with code `reasoning_effort_not_supported`
+before prompt preparation.
 
-For Chat Completions, `reasoning_effort: "none"` disables thinking. `low`, `medium`, and `xhigh`
-select the corresponding template effort when available. The other OpenAI protocol values
-`minimal`, `high`, and `max` are parsed but rejected when the loaded template does not expose them.
+Every endpoint accepts one spelling table and resolves it the same way: `none`, `off`,
+`disabled`, and `false` disable thinking, `minimal` also disables thinking, `low` and `medium`
+select their level, and `high`, `xhigh`, `max`, and `maximum` all select `xhigh`. Matching is
+ASCII case-insensitive and ignores surrounding whitespace. On a toggle-only template every graded
+word means "thinking on" without a budget.
 `enable_thinking` controls the same new-turn thinking switch; a contradictory combination with
 `reasoning_effort` returns `conflicting_template_option`.
+
+`--reasoning-effort LEVEL` sets the level for requests that name none; unset keeps the
+template's own default. `--no-thinking` is that option at `none` and cannot be combined with a
+graded level.
 
 `preserve_thinking` controls whether reasoning from closed assistant turns remains in later
 prompts. It defaults to the server setting, which is off unless `--preserve-thinking` is used. If
@@ -375,7 +381,7 @@ wire response contains typed `output` Items.
 | `temperature` | finite number in `[0,2]` |
 | `top_p` | finite number in `[0,1]` |
 | `metadata` | at most 16 string pairs; keys at most 64 characters and values at most 512 |
-| `reasoning.effort` | `none` disables thinking. On graded Qwen templates, `minimal`/`low` map to `low`, `medium` to `medium`, and `high`/`xhigh`/`max` to `xhigh`. On toggle-only templates, every non-`none` value enables thinking without a graded budget. |
+| `reasoning.effort` | Same spelling table as Chat Completions: `none`/`off`/`disabled`/`false`/`minimal` disable thinking, `low` and `medium` select their level, and `high`/`xhigh`/`max`/`maximum` select `xhigh`. On toggle-only templates, every graded word enables thinking without a budget. |
 | `reasoning.summary` | optional `auto`, `concise`, `detailed`, or null; accepted/echoed as a client preference. Local Qwen emits raw `reasoning_text` with an empty summary, without a separate summarization pass. |
 | `chat_template_kwargs.preserve_thinking` | optional boolean controlling whether closed-turn reasoning remains in reconstructed prompts |
 | `preserve_thinking` | top-level alias for the same option; conflicting values are rejected |
@@ -592,10 +598,12 @@ Consecutive system messages remain separate ordered turns.
 The independent top-level `preserve_thinking` boolean controls closed-turn history and otherwise
 uses the server default.
 
-Anthropic `output_config.effort` accepts the protocol values `low`, `medium`, `high`, `xhigh`, and
-`max`. The value is then checked against the loaded chat template in the same way as the OpenAI
-endpoints; the registered effort-capable template exposes `low`, `medium`, and `xhigh`. Combining
-an effort with `thinking.type: "disabled"` is rejected as contradictory.
+Anthropic `output_config.effort` accepts `low`, `medium`, `high`, `xhigh`, `max`, and the
+`maximum` alias; `high`, `xhigh`, `max`, and `maximum` all select `xhigh`. The value is then
+checked against the loaded chat template in the same way as the OpenAI endpoints. `minimal`,
+`off`, `disabled`, and `false` stay outside the Anthropic vocabulary: use
+`thinking.type: "disabled"` to turn thinking off. Combining an effort with
+`thinking.type: "disabled"` is rejected as contradictory.
 
 Anthropic's `model` field is treated as a response label and does not select the loaded artifact.
 
@@ -676,7 +684,8 @@ curl http://127.0.0.1:8080/v1/models \
 | `--vision-max-tokens N` | merged visual-token limit per prompt and reserved Vision workspace bound, independent of the text context ceiling; `1..32768` | `32768` |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
 | `--no-prefix-reuse` | disable compatible-prefix caching | prefix reuse on |
-| `--no-thinking` | disable thinking by default | thinking on |
+| `--no-thinking` | disable thinking by default; conflicts with a graded `--reasoning-effort` | thinking on |
+| `--reasoning-effort LEVEL` | thinking level for requests that name none (`none`, `low`, `medium`, `high`, `xhigh`) | template default |
 | `--preserve-thinking` | preserve closed-turn assistant reasoning by default | off |
 | `--cors` | permissive browser CORS headers | off |
 | `--temperature F` | process-level temperature override | unset |

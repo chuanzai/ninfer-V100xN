@@ -202,36 +202,48 @@ int test_reasoning_effort() {
                       "Chat Completions none effort did not disable thinking");
 
     for (const auto& [wire, expected] :
-         std::array<std::pair<const char*, RequestedReasoningEffort>, 6>{
+         std::array<std::pair<const char*, RequestedReasoningEffort>, 11>{
              {{"minimal", RequestedReasoningEffort::Minimal},
               {"medium", RequestedReasoningEffort::Medium},
               {"high", RequestedReasoningEffort::High},
               {"xhigh", RequestedReasoningEffort::XHigh},
               {"max", RequestedReasoningEffort::Max},
-              {"none", RequestedReasoningEffort::None}}}) {
+              {"maximum", RequestedReasoningEffort::Max},
+              {"none", RequestedReasoningEffort::None},
+              {"off", RequestedReasoningEffort::None},
+              {"disabled", RequestedReasoningEffort::None},
+              {"false", RequestedReasoningEffort::None},
+              {" HIGH ", RequestedReasoningEffort::High}}}) {
         Json body                = base;
         body["reasoning_effort"] = wire;
         failures += check(parse_chat_completion_request(body, default_limits()).reasoning_effort ==
                               expected,
-                          std::string("Chat Completions did not accept protocol effort ") + wire);
+                          std::string("Chat Completions did not accept effort spelling ") + wire);
     }
 
     Json high                            = base;
     high["reasoning_effort"]             = "high";
     const GenerationRequest high_request = parse_chat_completion_request(high, default_limits());
-    failures += check(api_code([&] {
-                          (void)resolve_prompt_semantics(high_request, default_server(),
-                                                         effort_capabilities());
-                      }) == "reasoning_effort_not_supported",
-                      "protocol-valid high effort was not rejected by template capability");
+    const ResolvedPromptSemantics high_semantics =
+        resolve_prompt_semantics(high_request, default_server(), effort_capabilities());
+    failures += check(high_semantics.enable_thinking &&
+                          high_semantics.reasoning_effort == ninfer::ReasoningEffort::XHigh,
+                      "Chat Completions high effort did not map to xhigh");
+
+    Json minimal                = base;
+    minimal["reasoning_effort"] = "minimal";
+    const ResolvedPromptSemantics minimal_semantics = resolve_prompt_semantics(
+        parse_chat_completion_request(minimal, default_limits()), default_server(),
+        effort_capabilities());
+    failures += check(!minimal_semantics.enable_thinking && !minimal_semantics.reasoning_effort,
+                      "Chat Completions minimal effort did not disable thinking");
 
     ninfer::PromptCapabilities toggle_capabilities;
     toggle_capabilities.enable_thinking = true;
-    failures += check(api_code([&] {
-                          (void)resolve_prompt_semantics(low_request, default_server(),
-                                                         toggle_capabilities);
-                      }) == "reasoning_effort_not_supported",
-                      "reasoning effort was accepted without template support");
+    const ResolvedPromptSemantics toggle_semantics =
+        resolve_prompt_semantics(low_request, default_server(), toggle_capabilities);
+    failures += check(toggle_semantics.enable_thinking && !toggle_semantics.reasoning_effort,
+                      "toggle-only template did not accept a graded effort as thinking on");
 
     Json conflict               = low;
     conflict["enable_thinking"] = false;

@@ -591,8 +591,8 @@ void parse_openai_reasoning_effort(const Json& body, GenerationRequest& out) {
     const std::string value = body.at("reasoning_effort").get<std::string>();
     const std::optional<RequestedReasoningEffort> effort = parse_requested_reasoning_effort(value);
     if (!effort) {
-        bad_request("reasoning_effort must be one of none, minimal, low, medium, high, xhigh, or "
-                    "max",
+        bad_request("reasoning_effort must be none, off, minimal, low, medium, high, xhigh, max, "
+                    "maximum, or disabled",
                     "reasoning_effort");
     }
     out.reasoning_effort       = *effort;

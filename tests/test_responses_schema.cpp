@@ -184,10 +184,17 @@ int test_reasoning_effort() {
     failures += check(!none_semantics.enable_thinking && !none_semantics.reasoning_effort,
                       "Responses none effort did not disable thinking");
 
+    Json minimal_body            = base;
+    minimal_body["reasoning"]    = Json{{"effort", "minimal"}};
+    const ResolvedPromptSemantics minimal_semantics =
+        resolve_prompt_semantics(parse_responses_request(minimal_body, limits()).generation,
+                                 ServeOptions{}, effort_capabilities());
+    failures += check(!minimal_semantics.enable_thinking && !minimal_semantics.reasoning_effort,
+                      "Responses minimal effort did not disable thinking");
+
     for (const auto& [wire, expected] :
-         std::array<std::pair<const char*, ninfer::ReasoningEffort>, 6>{
-             {{"minimal", ninfer::ReasoningEffort::Low},
-              {"low", ninfer::ReasoningEffort::Low},
+         std::array<std::pair<const char*, ninfer::ReasoningEffort>, 5>{
+             {{"low", ninfer::ReasoningEffort::Low},
               {"medium", ninfer::ReasoningEffort::Medium},
               {"high", ninfer::ReasoningEffort::XHigh},
               {"xhigh", ninfer::ReasoningEffort::XHigh},

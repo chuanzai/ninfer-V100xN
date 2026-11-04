@@ -634,13 +634,12 @@ void parse_reasoning(const Json& body, ResponsesRequest& out) {
     const std::string value = reasoning.at("effort").get<std::string>();
     const std::optional<RequestedReasoningEffort> effort = parse_requested_reasoning_effort(value);
     if (!effort) {
-        bad_request("reasoning.effort must be one of none, minimal, low, medium, high, xhigh, or "
-                    "max",
+        bad_request("reasoning.effort must be none, off, minimal, low, medium, high, xhigh, max, "
+                    "maximum, or disabled",
                     "reasoning");
     }
     out.generation.reasoning_effort       = *effort;
     out.generation.reasoning_effort_param = "reasoning.effort";
-    out.generation.map_responses_reasoning_effort = true;
 }
 
 void validate_metadata(const Json& body, ResponsesRequest& out) {

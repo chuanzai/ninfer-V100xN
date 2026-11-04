@@ -1,4 +1,5 @@
 #include "serve/serve_options.h"
+#include "serve/request.h"
 #include "product/speculative_options.h"
 
 #include <cerrno>
@@ -125,7 +126,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--ram-kv-window N] [--ram-kv-budget-bytes N] "
            "[--default-max-tokens N] [--max-output-tokens N] "
            "[--vision] [--vision-device gpu|cpu] [--vision-max-tokens N] [--no-cuda-graph] [--no-prefix-reuse] "
-           "[--lm-head-draft] [--no-thinking] [--preserve-thinking] [--cors] "
+           "[--lm-head-draft] [--no-thinking] [--reasoning-effort LEVEL] [--preserve-thinking] [--cors] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
            "[--frequency-penalty F] [--seed N] [--greedy]\n"
            "       serves OpenAI Responses/Chat Completions and Anthropic Messages endpoints\n"
@@ -160,6 +161,8 @@ std::string serve_usage_text(const char* argv0) {
            "       (up to 2 GiB active state RAM); historical branches also retain exact host KV\n"
            "       under the token budget plus a separate 2 GiB archived state cap. Suffixes are recomputed.\n"
            "       Vision/DFlash/RAM-KV retain frontier and turn/response checkpoint reuse.\n"
+           "       --reasoning-effort LEVEL: the thinking level of requests that name none "
+           "(none, low, medium, high, xhigh); none is the same as --no-thinking\n"
            "       --preserve-thinking retains closed-turn assistant reasoning in later prompts\n"
            "       sampler defaults come from the loaded model and resolved thinking mode; "
            "server flags and request fields override individual values.\n"
@@ -204,6 +207,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     bool kv_capacity_explicit        = false;
     bool device_explicit             = false;
     bool devices_explicit            = false;
+    bool no_thinking_explicit        = false;
     if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
         options.help_requested = true;
         return options;
@@ -370,6 +374,25 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.speculative.proposal_head = ProposalHead::Optimized;
         } else if (arg == "--no-thinking") {
             options.enable_thinking = false;
+            no_thinking_explicit    = true;
+        } else if (arg == "--reasoning-effort") {
+            const std::string value = require_value("--reasoning-effort");
+            const auto parsed       = parse_requested_reasoning_effort(value);
+            if (!parsed) {
+                throw std::invalid_argument(
+                    "--reasoning-effort must be none, low, medium, high, xhigh or max: " + value);
+            }
+            if (*parsed == RequestedReasoningEffort::None ||
+                *parsed == RequestedReasoningEffort::Minimal) {
+                options.enable_thinking = false;
+                options.default_reasoning_effort.reset();
+            } else {
+                options.enable_thinking = true;
+                options.default_reasoning_effort =
+                    *parsed == RequestedReasoningEffort::Low      ? ReasoningEffort::Low
+                    : *parsed == RequestedReasoningEffort::Medium ? ReasoningEffort::Medium
+                                                                  : ReasoningEffort::XHigh;
+            }
         } else if (arg == "--preserve-thinking") {
             options.preserve_thinking = true;
         } else if (arg == "--cors") {
@@ -422,6 +445,9 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     if (options.ram_kv.gpu_tokens == 0 && options.kv_capacity.mode == KvCapacityMode::Explicit &&
         options.kv_capacity.explicit_tokens < options.max_context) {
         throw std::invalid_argument("--kv-capacity must be at least --max-context");
+    }
+    if (no_thinking_explicit && options.default_reasoning_effort) {
+        throw std::invalid_argument("--no-thinking conflicts with --reasoning-effort");
     }
     if (options.max_concurrency == 0 || options.max_concurrency > kMaximumConcurrency) {
         throw std::invalid_argument("--max-concurrency must be in [1,8]");

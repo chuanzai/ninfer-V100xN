@@ -109,17 +109,28 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
         .reasoning_effort  = std::nullopt,
         .preserve_thinking = request.preserve_thinking.value_or(server.preserve_thinking),
     };
-    if (!request.reasoning_effort) { return result; }
+    if (!request.reasoning_effort) {
+        // --reasoning-effort: the level a request that names none gets.  A request that
+        // turns thinking off explicitly keeps the template's ungraded default.
+        if (result.enable_thinking && server.default_reasoning_effort &&
+            capabilities.reasoning_effort.supports(*server.default_reasoning_effort)) {
+            result.reasoning_effort = server.default_reasoning_effort;
+        }
+        return result;
+    }
 
     const RequestedReasoningEffort requested = *request.reasoning_effort;
-    const bool enables_thinking              = requested != RequestedReasoningEffort::None;
+    // `minimal` and `none` both mean thinking off here, matching Strata's vocabulary; the
+    // graded words then map onto the three levels the Qwen template knows.
+    const bool enables_thinking = requested != RequestedReasoningEffort::None &&
+                                  requested != RequestedReasoningEffort::Minimal;
     if (request.enable_thinking && *request.enable_thinking != enables_thinking) {
         invalid_prompt_option("reasoning effort conflicts with enable_thinking",
                               request.reasoning_effort_param, "conflicting_template_option");
     }
     result.enable_thinking = enables_thinking;
 
-    if (requested == RequestedReasoningEffort::None) {
+    if (!enables_thinking) {
         if (!capabilities.enable_thinking) {
             invalid_prompt_option("the loaded chat template cannot disable thinking",
                                   request.reasoning_effort_param, "reasoning_effort_not_supported");
@@ -127,45 +138,30 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
         return result;
     }
 
-    auto template_effort = requested;
-    if (request.map_responses_reasoning_effort) {
-        const auto& efforts = capabilities.reasoning_effort;
-        if (capabilities.enable_thinking && !efforts.low && !efforts.medium && !efforts.xhigh) {
-            // Toggle-only templates support thinking, without a graded token budget.
-            return result;
-        }
-        switch (requested) {
-        case RequestedReasoningEffort::Minimal:
-            template_effort = RequestedReasoningEffort::Low;
-            break;
-        case RequestedReasoningEffort::High:
-        case RequestedReasoningEffort::Max:
-            template_effort = RequestedReasoningEffort::XHigh;
-            break;
-        default:
-            break;
-        }
+    // Every endpoint uses one vocabulary now: high and max mean xhigh, exactly as the
+    // Responses API has always mapped them.  A toggle-only template accepts any graded
+    // word as "thinking on", without a budget.
+    const auto& efforts = capabilities.reasoning_effort;
+    if (capabilities.enable_thinking && !efforts.low && !efforts.medium && !efforts.xhigh) {
+        return result;
     }
-    switch (template_effort) {
+    switch (requested) {
     case RequestedReasoningEffort::Low:
         result.reasoning_effort = ninfer::ReasoningEffort::Low;
         break;
     case RequestedReasoningEffort::Medium:
         result.reasoning_effort = ninfer::ReasoningEffort::Medium;
         break;
+    case RequestedReasoningEffort::High:
+    case RequestedReasoningEffort::Max:
     case RequestedReasoningEffort::XHigh:
         result.reasoning_effort = ninfer::ReasoningEffort::XHigh;
         break;
     case RequestedReasoningEffort::Minimal:
-    case RequestedReasoningEffort::High:
-    case RequestedReasoningEffort::Max:
-        invalid_prompt_option("reasoning effort '" +
-                                  std::string(requested_reasoning_effort_name(requested)) +
-                                  "' is not supported by the loaded chat template",
-                              request.reasoning_effort_param, "reasoning_effort_not_supported");
     case RequestedReasoningEffort::None:
-        break;
+        break; // handled above
     }
+    if (!result.reasoning_effort) { return result; }
 
     if (!capabilities.reasoning_effort.supports(*result.reasoning_effort)) {
         invalid_prompt_option("reasoning effort '" +

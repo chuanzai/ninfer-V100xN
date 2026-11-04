@@ -66,6 +66,9 @@ struct ServeOptions {
     bool allow_prefix_reuse = true;
     bool enable_thinking =
         true; // default thinking mode for the generation prompt (--no-thinking opts out)
+    // --reasoning-effort: the level a request that names none resolves to.  Unset keeps the
+    // template's own default; "none" is folded into enable_thinking instead of stored here.
+    std::optional<ReasoningEffort> default_reasoning_effort;
     bool preserve_thinking = false;
     int default_max_tokens = kDefaultMaxTokens;
     int max_output_tokens = 0; // optional server-wide output ceiling
