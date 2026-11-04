@@ -124,6 +124,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--response-store-max-records N] [--response-store-max-mib N] "
            "[--kv-dtype bf16|int8] [--spec mtp|dflash --draft-tokens N] "
            "[--ram-kv-window N] [--ram-kv-budget-bytes N] "
+           "[--prefix-archive FILE] [--prefix-archive-max-mib N] "
            "[--default-max-tokens N] [--max-output-tokens N] "
            "[--vision] [--vision-device gpu|cpu] [--vision-max-tokens N] [--no-cuda-graph] [--no-prefix-reuse] "
            "[--lm-head-draft] [--no-thinking] [--reasoning-effort LEVEL] [--preserve-thinking] [--cors] "
@@ -155,6 +156,10 @@ std::string serve_usage_text(const char* argv0) {
            std::to_string(kDefaultKvCapacityHeadroomBytes / (1024ULL * 1024ULL)) +
            " MiB of sizing headroom\n"
            "       --prefix-cache-tokens N: historical host KV budget, default 384000; 0 disables history.\n"
+           "       --prefix-archive FILE: reload the host prefix archive at startup and rewrite it on "
+           "graceful shutdown.\n"
+           "       Only a file written by this exact binary, model and KV layout is accepted; "
+           "--prefix-archive-max-mib bounds one save (default 4096, 0 = unlimited).\n"
            "       --no-prefix-reuse disables compatible-prefix caching (enabled by default).\n"
            "       Prefix reuse supports parallel Text/MTP, including exact prompt hits.\n"
            "       Text/None/MTP also restores RAM state checkpoints within a shared prefix\n"
@@ -247,6 +252,18 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         } else if (arg == "--prefix-cache-tokens") {
             options.prefix_cache_tokens = static_cast<std::uint32_t>(
                 parse_nonnegative_int(require_value("--prefix-cache-tokens"), "prefix-cache-tokens"));
+        } else if (arg == "--prefix-archive") {
+            options.prefix_archive_path = require_value("--prefix-archive");
+            if (options.prefix_archive_path.empty()) {
+                throw std::invalid_argument("--prefix-archive must not be empty");
+            }
+        } else if (arg == "--prefix-archive-max-mib") {
+            const std::uint64_t mib =
+                parse_u64(require_value("--prefix-archive-max-mib"), "prefix-archive-max-mib");
+            if (mib > std::numeric_limits<std::size_t>::max() / (1ULL << 20)) {
+                throw std::invalid_argument("--prefix-archive-max-mib is out of range");
+            }
+            options.prefix_archive_max_bytes = static_cast<std::size_t>(mib << 20);
         } else if (arg == "--volta-fast-decode") {
             options.volta_fast_decode = true;
         } else if (arg == "--volta-long-attention") {

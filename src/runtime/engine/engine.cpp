@@ -9,14 +9,29 @@
 
 #include <ninfer/targets/qwen3_6/prepared_prompt.h>
 
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
 
+#include <sys/stat.h>
+
 namespace ninfer {
 namespace {
+
+// Identity of the running binary: any relink changes it, which is exactly the granularity the
+// prefix archive needs -- a rebuilt kernel may compute different KV for the same tokens, and a
+// restored prefix would then be silently stale rather than visibly wrong.
+std::string engine_build_stamp() {
+    struct stat info {};
+    if (::stat("/proc/self/exe", &info) != 0) { return "unknown"; }
+    char text[64] = {};
+    std::snprintf(text, sizeof text, "%llx-%llx", static_cast<unsigned long long>(info.st_size),
+                  static_cast<unsigned long long>(info.st_mtime));
+    return text;
+}
 
 runtime::ResolvedRequestOptions resolve_request_options(const ModelSamplingDefaults& defaults,
                                                         SamplingMode mode, RequestOptions options) {
@@ -449,6 +464,58 @@ MediaCacheSummary Engine::media_cache_summary() const {
             return target_ptr->loaded->frontend.media_cache_summary();
         },
         impl_->active);
+}
+
+namespace {
+PrefixArchiveStamp prefix_archive_stamp_for(const EngineOptions& options,
+                                                             const LoadSummary& load) {
+    PrefixArchiveStamp stamp;
+    stamp.build_id              = engine_build_stamp();
+    stamp.target                = load.target;
+    stamp.model_id              = load.model_id;
+    stamp.weights_id            = load.weights_id;
+    stamp.max_context           = options.max_context;
+    stamp.rope_mode             = static_cast<std::uint32_t>(load.rope_mode);
+    stamp.yarn_origin           = load.yarn_origin;
+    stamp.yarn_factor           = load.yarn_factor;
+    stamp.effective_max_context = load.effective_max_context;
+    stamp.yarn_mscale           = load.yarn_mscale;
+    stamp.tp                    = static_cast<std::uint32_t>(options.tp);
+    return stamp;
+}
+} // namespace
+
+PrefixArchiveStats Engine::save_prefix_archive(const std::string& path,
+                                               std::size_t max_bytes) const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    const PrefixArchiveStamp stamp =
+        prefix_archive_stamp_for(impl_->options, impl_->load);
+    return std::visit(
+        [&](const auto& executor) -> PrefixArchiveStats {
+            using Executor = std::remove_cvref_t<decltype(executor)>;
+            if constexpr (std::is_same_v<Executor, std::monostate>) {
+                throw std::logic_error("concurrent Engine executor is unavailable");
+            } else {
+                return executor->save_prefix_archive(path, max_bytes, stamp);
+            }
+        },
+        impl_->executor);
+}
+
+PrefixArchiveStats Engine::load_prefix_archive(const std::string& path) {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    const PrefixArchiveStamp stamp =
+        prefix_archive_stamp_for(impl_->options, impl_->load);
+    return std::visit(
+        [&](const auto& executor) -> PrefixArchiveStats {
+            using Executor = std::remove_cvref_t<decltype(executor)>;
+            if constexpr (std::is_same_v<Executor, std::monostate>) {
+                throw std::logic_error("concurrent Engine executor is unavailable");
+            } else {
+                return executor->load_prefix_archive(path, stamp);
+            }
+        },
+        impl_->executor);
 }
 
 RuntimeStats Engine::runtime_stats() const {

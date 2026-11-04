@@ -56,6 +56,10 @@ struct ServeOptions {
     KvCacheStorage kv_cache                = KvCacheStorage::BFloat16;
     RamKvOptions ram_kv;
     std::uint32_t prefix_cache_tokens = 384000;
+    // Durable host prefix archive: loaded after the engine is up, rewritten on graceful shutdown.
+    // Empty disables persistence; --prefix-archive-max-mib bounds what one save may write.
+    std::string prefix_archive_path;
+    std::size_t prefix_archive_max_bytes = 4096ULL << 20;
     bool volta_long_attention = false;
     bool volta_fast_decode = false;
     SpeculativeOptions speculative;

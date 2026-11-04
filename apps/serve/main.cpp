@@ -70,6 +70,24 @@ int main(int argc, char** argv) {
                << std::chrono::duration<double>(Clock::now() - load_start).count() << " s";
         ninfer::serve::write_console_log(ninfer::serve::ConsoleLogLevel::Info, loaded.str());
 
+        if (!options.prefix_archive_path.empty()) {
+            const ninfer::PrefixArchiveStats restored = service.load_prefix_archive();
+            std::ostringstream archive;
+            if (restored.ok) {
+                archive << "prefix archive restored from " << options.prefix_archive_path << ": "
+                        << restored.branches << " branches, " << restored.chunks << " chunks, "
+                        << format_bytes(restored.bytes);
+            } else {
+                archive << "prefix archive not restored: " << restored.message;
+            }
+            // A first start has no file yet; that is not worth a warning.
+            const bool absent = restored.message.rfind("no prefix archive", 0) == 0;
+            ninfer::serve::write_console_log(
+                restored.ok || absent ? ninfer::serve::ConsoleLogLevel::Info
+                                      : ninfer::serve::ConsoleLogLevel::Warning,
+                archive.str());
+        }
+
         const ninfer::MemorySummary memory = service.memory_summary();
         std::ostringstream capacity;
         capacity << "KV capacity "
@@ -114,6 +132,23 @@ int main(int argc, char** argv) {
 
         const bool ok = server.listen();
         g_server.store(nullptr);
+
+        if (!options.prefix_archive_path.empty()) {
+            const ninfer::PrefixArchiveStats saved = service.save_prefix_archive();
+            std::ostringstream archive;
+            if (saved.ok) {
+                archive << "prefix archive saved to " << options.prefix_archive_path << ": "
+                        << saved.branches << " branches, " << saved.chunks << " chunks, "
+                        << format_bytes(saved.bytes);
+            } else {
+                archive << "prefix archive not saved: " << saved.message;
+            }
+            ninfer::serve::write_console_log(
+                saved.ok ? ninfer::serve::ConsoleLogLevel::Info
+                         : ninfer::serve::ConsoleLogLevel::Warning,
+                archive.str());
+        }
+
         if (!ok) {
             ninfer::serve::write_console_log(ninfer::serve::ConsoleLogLevel::Error,
                                              "failed to bind " + options.host + ':' +

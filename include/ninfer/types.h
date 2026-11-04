@@ -563,6 +563,34 @@ struct RuntimeStats {
     std::uint32_t waiting_requests      = 0;
 };
 
+// Outcome of one prefix-archive save/load. `ok == false` always carries the reason in `message`;
+// a refused load leaves the engine's archive untouched rather than restoring part of a file.
+struct PrefixArchiveStats {
+    bool ok              = false;
+    std::size_t branches = 0;
+    std::size_t chunks   = 0;
+    std::size_t bytes    = 0;
+    std::string message;
+};
+
+// Environment half of the prefix-archive identity: what the engine knows about the artifact and
+// the rotary regime it was started with. The target runtime appends its own layout half (device
+// count, KV payload size, state-image size) so a file is only restorable by the exact engine that
+// wrote it -- a rebuilt binary can move numerics even with identical weights.
+struct PrefixArchiveStamp {
+    std::string build_id;
+    std::string target;
+    std::string model_id;
+    std::string weights_id;
+    std::uint32_t max_context           = 0;
+    std::uint32_t rope_mode             = 0;
+    std::uint32_t yarn_origin           = 0;
+    double yarn_factor                  = 0.0;
+    std::uint32_t effective_max_context = 0;
+    double yarn_mscale                  = 1.0;
+    std::uint32_t tp                    = 1;
+};
+
 struct LoadSummary {
     int tp = 1;
     int pp = 1;

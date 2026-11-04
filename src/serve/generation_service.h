@@ -128,6 +128,11 @@ public:
 
     void warmup();
 
+    // Host prefix-archive persistence against options().prefix_archive_path. Both return an
+    // empty (ok=false) result when no path is configured; the caller decides how loudly to log.
+    [[nodiscard]] ninfer::PrefixArchiveStats save_prefix_archive() const;
+    [[nodiscard]] ninfer::PrefixArchiveStats load_prefix_archive();
+
 private:
     [[nodiscard]] std::shared_ptr<RequestLifetime> acquire_request_lifetime() const;
 

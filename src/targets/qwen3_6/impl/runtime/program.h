@@ -422,6 +422,10 @@ public:
     void restore_archived_prefix(SequenceState& sequence, const ArchivedPrefix& archive,
                                  const RequestPlanImpl& plan);
     void trim_prefix_history();
+    // Defined in prefix_archive_io.h; the archive is host-only, so neither path touches CUDA.
+    PrefixArchiveStats save_prefix_archive(const std::string& path, std::size_t max_bytes,
+                                           const PrefixArchiveStamp& stamp);
+    PrefixArchiveStats load_prefix_archive(const std::string& path, const PrefixArchiveStamp& stamp);
 
     DecodeGraphFamily ordinary_graphs;
     DecodeGraphFamily mtp_graphs;

@@ -672,6 +672,8 @@ curl http://127.0.0.1:8080/v1/models \
 | `--response-store-max-mib N` | total local Response envelope/Item/context budget | `256` |
 | `--kv-dtype bf16\|int8` | KV-cache storage | `bf16` |
 | `--prefix-cache-tokens N` | historical host KV budget in unique page-rounded Main Text tokens; `0` disables historical branches, preserving current GPU-prefix reuse | `384000` |
+| `--prefix-archive FILE` | restore the host prefix archive at startup and rewrite it on graceful shutdown; only a file written by this exact binary, model and KV layout is accepted | disabled |
+| `--prefix-archive-max-mib N` | bound on what one archive save may write; `0` is unlimited; saving happens after the listener closes, so raise `TimeoutStopSec` | `4096` |
 | `--volta-long-attention` | startup-fixed experimental complete-history attention; SM70 27B TP2/TP4, PP1, experimental concurrency 1–8, INT8 KV, Text/None/MTP (Vision on TP2 only); excludes RAM-KV; floating-point association and output IDs may change | off |
 | `--volta-fast-decode` | experimental QUASAR SM70 TP2/TP4 Text/None/MTP numeric profile: packed NVFP4 FP32 epilogue and MTP W8 reductions; may change logits, acceptance and output; excludes Vision/DFlash/PP2 | off |
 | `--spec mtp\|dflash` | speculative backend | off |
@@ -832,15 +834,16 @@ therefore resets the prefix instead of reusing placeholder-token KV. Media wholl
 prefix skips Vision execution, while new suffix media is encoded normally. The completion log
 reports the reused token count as `cache=`.
 
-The prefix cache is process-local Engine state; restarting the server clears it. Text/None/MTP
+The prefix cache is process-local Engine state; restarting the server clears it unless
+`--prefix-archive` names a file to restore from. Text/None/MTP
 with complete GPU KV also retains historical branches and multiple conversation trees in host RAM.
 Before an old resident branch is overwritten or its lane evicted, its original Main/MTP KV and
 complete continuation checkpoints can be archived. `--prefix-cache-tokens` defaults to **384000**
 unique page-rounded Main Text tokens, shared across all trees; overflow evicts the oldest archived
 branch first. A historical hit restores private writable GPU pages and exact state, including
 completed-sibling fan-out. `ABD → ABC → ABDE` can therefore recover ABD. Setting the budget
-to zero keeps current resident reuse but disables historical retention. This is not disk persistence
-or a process RSS cap: QUASAR INT8 Main KV plus MTP can use about **12.8 GiB RAM** at the 384K default
+to zero keeps current resident reuse but disables historical retention. The archive is host RAM, not
+a process RSS cap: QUASAR INT8 Main KV plus MTP can use about **12.8 GiB RAM** at the 384K default
 (about **33.4 GiB RAM** at 1M tokens),
 plus state images and transfer headroom. In addition to the current resident frontier and a saved complete
 turn/response checkpoint, reusable text requests with None/MTP speculation and complete GPU KV
@@ -860,6 +863,35 @@ Capture/restore transfer time is included
 in prefill timing. `--no-prefix-reuse` also skips these captures. Vision, DFlash and sparse RAM-KV
 keep the existing frontier/turn/response rules and do not archive historical branches.
 See [prefix state ownership](maintainer/paged-kv-cache.md#10-prefix-reuse).
+
+`--prefix-archive FILE` makes the historical archive durable. After the listener closes on a graceful
+shutdown, the resident branches are captured with the same rules the in-process archive uses, then the
+most recent branches by frontier are written to `FILE` in descending order until
+`--prefix-archive-max-mib` is exhausted, so a prompt that fit one save is restored whole. The write
+stages `<FILE>.tmp`, `fsync`s it, and renames it over `FILE`; an interrupted or crashed save leaves the
+previous file intact. On startup the file is read before the first request and its branches are pushed
+into the same LRU the historical archive feeds, so the first matching prompt reports those tokens in
+`cached_tokens` instead of prefilling them.
+
+The file is a cache, never a source of truth. Its header carries a stamp of the executable build, target,
+model and weights ids, KV dtype, quantisation group and page geometry, TP/PP width and device list,
+concurrency, per-token payload and checkpoint byte counts, capacity, RoPE/YaRN parameters and the
+effective context, plus the speculative backend, draft window, vision mode and `--volta-long-attention`.
+Any mismatch on any field discards the whole file with a warning and the server starts cold; there is
+no partial or best-effort restore, because restoring KV produced by a different build would alias
+prefixes the runtime guarantees are numerically recomputed. Recompiling the binary is therefore enough
+to invalidate the archive, as is changing `--tp`, `--kv-dtype`, `--max-context` or the weight files.
+Bodies are additionally covered by an FNV-1a hash and a byte count, and a truncated or corrupted save is
+rejected rather than partially loaded.
+
+Saving costs one sequential write of the whole archive and happens after the port is released, so it
+extends shutdown by roughly `bytes / device write bandwidth` plus the hash pass — about 13s of total
+stop time for a 2.9 GiB archive on a SATA SSD. Raise `TimeoutStopSec` above that, or the unit is killed
+mid-save and the previous file survives. Saving needs no extra GPU work: the payload is copied from the
+host archive that already exists. The file is uncompressed and holds prompt tokens, positions and
+encoded-media digests in the clear, so treat it as conversation content. Keep it outside the repository
+(for example under `state/`, which `*.bin` already ignores) and delete it when moving the deployment to
+another host.
 
 The shared family runtime distinguishes `full_reset`, `append_frontier`,
 `restore_turn_checkpoint`, `restore_response_checkpoint`, and `restore_prefix_checkpoint`.

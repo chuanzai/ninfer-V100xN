@@ -565,8 +565,18 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     return outcome;
 }
 
-void GenerationService::warmup() {
-    try {
+ninfer::PrefixArchiveStats GenerationService::save_prefix_archive() const {
+    if (options_.prefix_archive_path.empty()) { return {}; }
+    return engine_->save_prefix_archive(options_.prefix_archive_path,
+                                        options_.prefix_archive_max_bytes);
+}
+
+ninfer::PrefixArchiveStats GenerationService::load_prefix_archive() {
+    if (options_.prefix_archive_path.empty()) { return {}; }
+    return engine_->load_prefix_archive(options_.prefix_archive_path);
+}
+
+void GenerationService::warmup() {    try {
         GenerationRequest request;
         ChatTurn turn;
         turn.role = ChatRole::User;

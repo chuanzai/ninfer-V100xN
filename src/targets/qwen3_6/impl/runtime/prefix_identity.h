@@ -23,6 +23,17 @@ public:
 
     [[nodiscard]] bool matches(const PreparedPromptData& prompt, std::size_t count) const;
 
+    // Archive support: raw field access. The encoder decides the on-disk shape; this class only
+    // guarantees that whatever comes back is shape-consistent.
+    [[nodiscard]] const std::vector<std::uint8_t>& token_types() const noexcept { return token_types_; }
+    [[nodiscard]] const std::array<std::vector<std::int32_t>, 3>& positions() const noexcept {
+        return positions_;
+    }
+    [[nodiscard]] const std::vector<VisionItem>& vision_items() const noexcept { return vision_items_; }
+    void assign_raw(std::vector<std::uint8_t> token_types,
+                    std::array<std::vector<std::int32_t>, 3> positions,
+                    std::vector<VisionItem> vision_items);
+
 private:
     std::vector<std::uint8_t> token_types_;
     std::array<std::vector<std::int32_t>, 3> positions_;

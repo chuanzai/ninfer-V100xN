@@ -145,9 +145,22 @@ bool ResidentPrefixIdentity::matches(const PreparedPromptData& prompt, std::size
     return true;
 }
 
+void ResidentPrefixIdentity::assign_raw(std::vector<std::uint8_t> token_types,
+                                       std::array<std::vector<std::int32_t>, 3> positions,
+                                       std::vector<VisionItem> vision_items) {
+    const std::size_t tokens = token_types.size();
+    for (const auto& axis : positions) {
+        if (axis.size() != tokens) {
+            throw std::invalid_argument("restored prefix identity has an invalid position shape");
+        }
+    }
+    token_types_  = std::move(token_types);
+    positions_    = std::move(positions);
+    vision_items_ = std::move(vision_items);
+}
+
 bool prefix_matches(const PreparedPromptData& prompt, const std::vector<TokenId>& resident_tokens,
-                    const ResidentPrefixIdentity& resident_identity, std::size_t count) {
-    if (count > prompt.token_ids.size() || count > resident_tokens.size()) { return false; }
+                    const ResidentPrefixIdentity& resident_identity, std::size_t count) {    if (count > prompt.token_ids.size() || count > resident_tokens.size()) { return false; }
     return std::equal(prompt.token_ids.begin(),
                       prompt.token_ids.begin() + static_cast<std::ptrdiff_t>(count),
                       resident_tokens.begin()) &&

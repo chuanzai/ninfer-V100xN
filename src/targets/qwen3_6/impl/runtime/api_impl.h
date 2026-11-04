@@ -232,6 +232,19 @@ void Program<Variant>::reset_memory_peaks() noexcept {
 }
 
 template <>
+PrefixArchiveStats Program<Variant>::save_prefix_archive(const std::string& path,
+                                                         std::size_t max_bytes,
+                                                         const PrefixArchiveStamp& stamp) {
+    return impl_->save_prefix_archive(path, max_bytes, stamp);
+}
+
+template <>
+PrefixArchiveStats Program<Variant>::load_prefix_archive(const std::string& path,
+                                                         const PrefixArchiveStamp& stamp) {
+    return impl_->load_prefix_archive(path, stamp);
+}
+
+template <>
 std::span<const std::uint16_t> Program<Variant>::last_round_logits_bf16() const noexcept {
     return impl_->last_round_logits_bf16();
 }

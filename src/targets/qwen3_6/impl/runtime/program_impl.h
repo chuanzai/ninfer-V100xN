@@ -3545,3 +3545,7 @@ void ProgramImplCore::reset_memory_peaks() noexcept {
 }
 
 } // namespace ninfer::targets::qwen3_6::detail::NINFER_QWEN36_RUNTIME_NS
+
+// Member definitions for the durable prefix archive. Included last: they need the complete
+// ProgramImplCore type, and they open the same runtime namespace themselves.
+#include "targets/qwen3_6/impl/runtime/prefix_archive_io.h"

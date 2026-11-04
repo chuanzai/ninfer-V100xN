@@ -184,6 +184,16 @@ public:
     [[nodiscard]] MemorySummary memory_summary() const noexcept;
     void reset_memory_peaks() noexcept;
 
+    // Prefix-archive persistence. Both run on the executor worker (the only thread that mutates
+    // the archive), so they must not be called with a request in flight. Save writes the newest
+    // branches that fit `max_bytes` (0 = unlimited) atomically; load refuses any file whose
+    // stamps do not match this engine and leaves the archive empty.
+    [[nodiscard]] PrefixArchiveStats save_prefix_archive(const std::string& path,
+                                                         std::size_t max_bytes,
+                                                         const PrefixArchiveStamp& stamp);
+    [[nodiscard]] PrefixArchiveStats load_prefix_archive(const std::string& path,
+                                                         const PrefixArchiveStamp& stamp);
+
     // Debug-only, OFF by default: capture of the full-vocabulary logits behind the most recently
     // sampled token, as raw BF16 bits (see ProgramImplCore::logits_capture in the impl runtime).
     // Nothing is allocated, copied, or otherwise changed until enable_logits_capture(true) runs,

@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <deque>
 #include <exception>
+#include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -186,10 +188,27 @@ public:
         return Submission(*this, std::move(request));
     }
 
+    // Prefix-archive persistence. The Program's archive is only mutated by the worker, so a save
+    // or load has to happen there; both are meant for process shutdown and startup, when the
+    // queue is empty and the call is effectively a thread hand-off.
+    [[nodiscard]] PrefixArchiveStats save_prefix_archive(const std::string& path,
+                                                         std::size_t max_bytes,
+                                                         const PrefixArchiveStamp& stamp) {
+        return run_control([this, path, max_bytes, stamp] {
+            return instance_.program->save_prefix_archive(path, max_bytes, stamp);
+        });
+    }
+
+    [[nodiscard]] PrefixArchiveStats load_prefix_archive(const std::string& path,
+                                                         const PrefixArchiveStamp& stamp) {
+        return run_control([this, path, stamp] {
+            return instance_.program->load_prefix_archive(path, stamp);
+        });
+    }
+
     [[nodiscard]] MemorySummary memory_summary() const {
         std::scoped_lock lock(execution_mutex_);
-        MemorySummary out                      = instance_.program->memory_summary();
-        out.request_transient                  = instance_.request_memory.summary();
+        MemorySummary out                      = instance_.program->memory_summary();        out.request_transient                  = instance_.request_memory.summary();
         const KvCapacityResolution& resolution = instance_.kv_capacity_resolution;
         out.kv_capacity_mode                   = resolution.mode;
         out.kv_capacity_page_groups            = resolution.main_page_groups;
@@ -1229,6 +1248,39 @@ private:
         publish_runtime_stats();
     }
 
+    // Runs one callable on the worker thread and blocks until it returns. Used for engine-state
+    // work that must serialize with request execution but needs no GPU unit of its own.
+    template <class Fn>
+    auto run_control(Fn&& fn) -> std::invoke_result_t<Fn> {
+        using Result = std::invoke_result_t<Fn>;
+        auto task     = std::make_shared<std::packaged_task<Result()>>(std::forward<Fn>(fn));
+        std::future<Result> future = task->get_future();
+        {
+            std::lock_guard lock(control_mutex_);
+            if (control_pending_.load()) {
+                throw std::logic_error("an engine control job is already pending");
+            }
+            control_job_ = [task] { (*task)(); };
+            control_pending_.store(true);
+        }
+        queue_cv_.notify_one();
+        if (future.wait_for(kControlJobTimeout) != std::future_status::ready) {
+            throw std::runtime_error("engine control job did not run before its timeout");
+        }
+        return future.get();
+    }
+
+    void run_control_job() {
+        std::function<void()> job;
+        {
+            std::lock_guard lock(control_mutex_);
+            job = std::move(control_job_);
+            control_job_ = nullptr;
+            control_pending_.store(false);
+        }
+        if (job) { job(); }
+    }
+
     void worker_loop() noexcept {
         bool previous_unit_was_decode = false;
         std::uint32_t decode_rounds_since_prefill = 0;
@@ -1241,7 +1293,9 @@ private:
                         active = active || slots_[lane] != nullptr;
                     }
                     if (!active) {
-                        queue_cv_.wait(lock, [&] { return stopping_ || !pending_.empty(); });
+                        queue_cv_.wait(lock, [&] {
+                            return stopping_ || !pending_.empty() || control_pending_.load();
+                        });
                     }
                 }
                 if (stopping_) {
@@ -1250,6 +1304,11 @@ private:
                         RequestErrorKind::Unavailable, "inference engine is shutting down")));
                     return;
                 }
+            }
+
+            if (control_pending_.load()) {
+                run_control_job();
+                continue;
             }
 
             try {
@@ -1317,6 +1376,11 @@ private:
     mutable std::mutex execution_mutex_;
     mutable std::mutex queue_mutex_;
     mutable std::mutex stats_mutex_;
+    // Control jobs (prefix-archive save/load) run on the worker between execution units.
+    mutable std::mutex control_mutex_;
+    std::function<void()> control_job_;
+    std::atomic<bool> control_pending_{false};
+    static constexpr std::chrono::seconds kControlJobTimeout{120};
     std::condition_variable queue_cv_;
     std::deque<std::shared_ptr<Request>> pending_;
     std::size_t outstanding_       = 0;

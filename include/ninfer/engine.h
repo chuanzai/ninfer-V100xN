@@ -119,6 +119,14 @@ public:
     [[nodiscard]] MediaCacheSummary media_cache_summary() const;
     void reset_memory_peaks() noexcept;
 
+    // Host-side prefix-archive persistence. Save writes the newest prefix branches that fit
+    // `max_bytes` (0 = unlimited) to `path` atomically; load accepts only a file produced by this
+    // exact binary, artifact and KV layout, and otherwise leaves the archive empty. Both run on
+    // the engine worker thread and are meant for process shutdown/startup, not for serving.
+    [[nodiscard]] PrefixArchiveStats save_prefix_archive(const std::string& path,
+                                                         std::size_t max_bytes) const;
+    [[nodiscard]] PrefixArchiveStats load_prefix_archive(const std::string& path);
+
     // Debug-only, OFF by default: capture of the full-vocabulary logits behind each sampled token.
     // Not part of the wire-facing API. Until debug_enable_logit_capture(true) is called nothing is
     // allocated or copied and execution is unchanged; debug_last_round_logits_bf16() then returns
