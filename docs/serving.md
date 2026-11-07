@@ -322,7 +322,9 @@ builds from deadlocking the memory account.
 
 An expanded prompt beyond `--max-context` returns HTTP 400 `context_length_exceeded`, including
 the prepared token count and configured context ceiling. A media preprocessing resource rejection
-returns HTTP 400 `media_budget_exceeded`. HTTP 413 `request_too_large` is reserved for a raw request
+returns HTTP 400 `media_budget_exceeded`; its message states the measured extent, the configured
+limit, the overage, and how many of the oldest media items would have to be omitted to fit again.
+HTTP 413 `request_too_large` is reserved for a raw request
 body that exceeds `--max-request-mib` before JSON parsing; it is not used for model-context or media
 resource errors.
 
