@@ -63,6 +63,9 @@ struct VisionItem {
 
 struct PreprocessStats {
     std::size_t media_items              = 0;
+    // Media items already charged to the resource budget. Stays below `media_items` while a
+    // request is still preparing, so budget rejections report the extent they actually measured.
+    std::size_t budgeted_items           = 0;
     std::size_t media_bytes              = 0;
     std::uint64_t raw_patches            = 0;
     std::uint64_t vision_tokens          = 0;

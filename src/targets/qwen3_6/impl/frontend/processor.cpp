@@ -273,6 +273,7 @@ public:
 
     void claim(const VisionItem& item) {
         std::lock_guard lock(mutex_);
+        ++stats_.budgeted_items;
         add_budget(stats_, item);
         enforce_media_resource_limits(stats_, options_);
     }
@@ -295,6 +296,7 @@ Prepared prepare_image(std::span<const std::uint8_t> bytes, const ProcessorOptio
     out.item.modality = Modality::Image;
     out.item.grid     = {1, gh, gw};
     PreprocessStats item_stats;
+    item_stats.budgeted_items = 1;
     add_budget(item_stats, out.item);
     enforce_media_resource_limits(item_stats, options);
     request_budget.claim(out.item);
@@ -334,6 +336,7 @@ Prepared prepare_video(std::span<const std::uint8_t> bytes, const ProcessorOptio
     out.item.modality = Modality::Video;
     out.item.grid     = {gt, gh, gw};
     PreprocessStats item_stats;
+    item_stats.budgeted_items = 1;
     add_budget(item_stats, out.item);
     enforce_media_resource_limits(item_stats, options);
     request_budget.claim(out.item);
@@ -468,15 +471,65 @@ void add_budget(PreprocessStats& stats, const VisionItem& item) {
                                          "vision attention pairs");
 }
 
+std::string million_pixels(std::uint64_t pixels) {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(1) << static_cast<double>(pixels) / 1'000'000.0 << " MP";
+    return out.str();
+}
+
+// One raw Vision patch covers kPatch x kPatch source pixels.
+std::string patch_extent(std::uint64_t patches) {
+    const std::uint64_t pixels = checked_mul(patches, kPatch * kPatch, "vision patch pixels");
+    std::ostringstream out;
+    out << patches << " patches [" << million_pixels(pixels) << ']';
+    return out.str();
+}
+
+// State how many of the oldest media items have to go for the prompt to fit again. Items differ in
+// size, so the count is derived from the mean extent already accounted for; it is advice for the
+// client, which owns the conversation order the processor never sees.
+std::string omission_hint(const PreprocessStats& stats, std::uint64_t over) {
+    if (stats.budgeted_items <= 1 || over == 0) { return {}; }
+    const std::uint64_t mean = stats.raw_patches / stats.budgeted_items;
+    if (mean == 0) { return {}; }
+    const std::uint64_t omit =
+        std::min<std::uint64_t>((over + mean - 1) / mean, stats.budgeted_items);
+    std::ostringstream out;
+    out << ", media items " << stats.budgeted_items;
+    if (omit < stats.budgeted_items) {
+        out << ": omit the oldest " << omit;
+    } else {
+        out << ": every image must shrink or be omitted";
+    }
+    return out.str();
+}
+
+[[noreturn]] void throw_patch_budget(const PreprocessStats& stats,
+                                     const ProcessorOptions& options) {
+    const std::uint64_t over = stats.raw_patches - options.max_raw_patches;
+    std::ostringstream message;
+    message << "vision raw patches exceed processor budget (used "
+            << patch_extent(stats.raw_patches) << ", limit " << patch_extent(options.max_raw_patches)
+            << ", over "
+            << million_pixels(checked_mul(over, kPatch * kPatch, "vision patch pixels"))
+            << omission_hint(stats, over) << ')';
+    throw ProcessorError(ProcessorErrorKind::BudgetExceeded, message.str());
+}
+
+[[noreturn]] void throw_token_budget(const PreprocessStats& stats,
+                                     const ProcessorOptions& options) {
+    const std::uint64_t over = stats.vision_tokens - options.max_vision_tokens;
+    std::ostringstream message;
+    message << "vision tokens exceed processor budget (used " << stats.vision_tokens << " of "
+            << options.max_vision_tokens << " Vision tokens, over " << over
+            << omission_hint(stats, checked_mul(over, kMerge * kMerge, "vision token patches"))
+            << ')';
+    throw ProcessorError(ProcessorErrorKind::BudgetExceeded, message.str());
+}
+
 void enforce_media_resource_limits(const PreprocessStats& stats, const ProcessorOptions& options) {
-    if (stats.raw_patches > options.max_raw_patches) {
-        throw ProcessorError(ProcessorErrorKind::BudgetExceeded,
-                             "vision raw patches exceed processor budget");
-    }
-    if (stats.vision_tokens > options.max_vision_tokens) {
-        throw ProcessorError(ProcessorErrorKind::BudgetExceeded,
-                             "vision tokens exceed processor budget");
-    }
+    if (stats.raw_patches > options.max_raw_patches) { throw_patch_budget(stats, options); }
+    if (stats.vision_tokens > options.max_vision_tokens) { throw_token_budget(stats, options); }
 }
 
 void assign_positions(ProcessedInput& output) {
@@ -639,14 +692,20 @@ ProcessedInput Processor::process(std::vector<ChatMessage> messages,
     const std::uint64_t maximum_items_from_extents =
         std::min(options_.max_raw_patches / kMinimumRawPatchesPerItem, options_.max_vision_tokens);
     if (std::cmp_greater(parts.size(), maximum_items_from_extents)) {
-        throw ProcessorError(ProcessorErrorKind::BudgetExceeded,
-                             "minimum Vision grids exceed processor extent budget");
+        std::ostringstream message;
+        message << "minimum Vision grids exceed processor extent budget (media items "
+                << parts.size() << ", limit " << maximum_items_from_extents << ')';
+        throw ProcessorError(ProcessorErrorKind::BudgetExceeded, message.str());
     }
     std::size_t remaining_media_bytes = options_.max_encoded_media_bytes;
     for (const ChatPart* part : parts) {
         if (part->media.bytes.size() > remaining_media_bytes) {
-            throw ProcessorError(ProcessorErrorKind::BudgetExceeded,
-                                 "request media bytes exceed processor budget");
+            std::ostringstream message;
+            message << "request media bytes exceed processor budget (used "
+                    << options_.max_encoded_media_bytes - remaining_media_bytes << " of "
+                    << options_.max_encoded_media_bytes << " bytes, next item "
+                    << part->media.bytes.size() << " bytes)";
+            throw ProcessorError(ProcessorErrorKind::BudgetExceeded, message.str());
         }
         remaining_media_bytes -= part->media.bytes.size();
     }
@@ -737,6 +796,7 @@ ProcessedInput Processor::process(std::vector<ChatMessage> messages,
         item.patch_count = media.payload->patch_elements / kPatchFeatures;
         patch_cursor += item.patch_count;
         try {
+            ++stats.budgeted_items;
             add_budget(stats, item);
             enforce_media_resource_limits(stats, options_);
         } catch (...) {
