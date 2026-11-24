@@ -104,6 +104,8 @@ PersistentLayout persistent_layout(const SequencePlanImpl& plan) {
     }
     const std::int32_t linear_state_slots =
         LinearStateSlots::state_slot_count(plan.max_concurrency) + (plan.ram_kv.gpu_tokens != 0 ? 1 : 0);
+    // In single-GPU RAM-KV the rewrite and final-query preview images are only copied.
+    const int host_checkpoints = tp == 1 && plan.pp == 1 && plan.ram_kv.gpu_tokens != 0 ? 2 : 0;
     const auto effective_prefill_chunk =
         static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
     const std::uint32_t logical_pages  = page_count(plan.capacity);
@@ -133,6 +135,7 @@ PersistentLayout persistent_layout(const SequencePlanImpl& plan) {
                      .text_physical_page_groups = physical_pages,
                      .mtp_physical_page_groups  = mtp_physical_pages,
                      .ram_kv                    = plan.ram_kv.gpu_tokens != 0,
+                     .host_retrieval_keys       = tp == 1 && plan.pp == 1 && plan.ram_kv.gpu_tokens != 0,
                      .linear_attention =
                          {
                              .layers         = static_cast<std::uint32_t>(TextConfig::gdn_layers() / plan.pp),
@@ -141,9 +144,10 @@ PersistentLayout persistent_layout(const SequencePlanImpl& plan) {
                              .value_heads    = TextConfig::gdn_value_heads / tp,
                              .value_head_dim = TextConfig::gdn_value_head_dim,
                              .key_head_dim   = TextConfig::gdn_key_head_dim,
-                             .slot_count     = linear_state_slots,
+                             .slot_count     = linear_state_slots - host_checkpoints,
                              .conv_dtype     = DType::BF16,
                          },
+                     .host_checkpoint_slots = host_checkpoints,
                  });
     if (plan.speculative_backend != SpeculativeBackend::None) {
         // Replay records follow the device's layer/head geometry. Record capacity and
@@ -577,6 +581,10 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
                     matrix(layout, DType::BF16, DFlashConfig::feature_rows, tokens);
                 }
                 (void)workspace_recipe::dflash_context<DFlashConfig>(layout, tokens);
+                if (tokens >= 3 && tokens <= 8) {
+                    auto image = layout.scope();
+                    matrix(layout, DType::FP16, DFlashConfig::feature_rows, tokens);
+                }
                 {
                     auto layer = layout.scope();
                     (void)workspace_recipe::dflash_context_layer<DFlashConfig>(layout, tokens);
@@ -590,6 +598,10 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
                 {
                     auto attention = layout.scope();
                     (void)workspace_recipe::dflash_attention<DFlashConfig>(layout, tokens);
+                    if (tokens >= 3 && tokens <= 8) {
+                        auto image = layout.scope();
+                        matrix(layout, DType::FP16, DFlashConfig::hidden, tokens);
+                    }
                     scratch(layout,
                             std::max(ops::swa_workspace_capacity_bytes({0, plan.capacity}, width,
                                                                        width, batch),
@@ -600,6 +612,10 @@ WorkspacePlan build_workspace_plan(const SequencePlanImpl& plan) {
                     auto mlp = layout.scope();
                     (void)workspace_recipe::dflash_mlp<DFlashConfig>(layout, tokens);
                     matrix(layout, DType::BF16, 2 * DFlashConfig::intermediate, tokens);
+                    if (tokens >= 3 && tokens <= 8) {
+                        auto image = layout.scope();
+                        matrix(layout, DType::FP16, DFlashConfig::intermediate, tokens);
+                    }
                 }
                 matrix(layout, DType::BF16, DFlashConfig::hidden, drafts * batch);
                 matrix(layout, DType::BF16, DFlashConfig::hidden, drafts * batch);
@@ -684,8 +700,8 @@ std::uint32_t validate_target_options(DeviceContext& device, const EngineOptions
     if (options.volta_long_attention &&
         (TextConfig::query_heads != 24 || device.sm() != 70 || (options.tp != 2 && options.tp != 4) || options.pp != 1 ||
          options.kv_cache != KvCacheStorage::Int8Group64 || options.ram_kv.gpu_tokens != 0 ||
-         options.speculative.backend == SpeculativeBackend::DFlash)) {
-        throw std::invalid_argument("Volta long attention requires SM70 27B TP2/TP4 Text/None/MTP (Vision on TP2 only) with complete INT8 KV");
+         (options.speculative.backend == SpeculativeBackend::DFlash && options.tp != 2))) {
+        throw std::invalid_argument("Volta long attention requires SM70 27B TP2/TP4 with complete INT8 KV; Vision and DFlash require TP2");
     }
     if (options.ram_kv.gpu_tokens != 0) {
         if constexpr (TextConfig::query_heads != 24) {
@@ -899,7 +915,8 @@ std::unique_ptr<SequencePlanImpl> build_sequence_candidate(const SequencePlannin
         } else {
             const auto class_allowance = [&](std::uint32_t batch_size) {
                 const auto profiles =
-                    dflash_graph_profiles(impl->capacity, impl->draft_window, batch_size);
+                    dflash_graph_profiles(impl->capacity, impl->draft_window, batch_size,
+                                          impl->volta_long_attention);
                 return graph_topology_allowance(
                     profiles,
                     [&](GraphExecutionProfile profile) {

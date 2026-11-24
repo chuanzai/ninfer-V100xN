@@ -12,9 +12,7 @@ change, and the current combination has no GPQA result.
 The earlier 220 W host's four-card NVLink optimization measures **283.118 / 283.367 committed wall tok/s** at
 85K input with QUASAR/MTP4 and both experimental flags, mean **283.242 ± 0.176**, retaining
 **220 W / 1200 MHz** limits. Prefill averages **2334.73 tok/s**, up from 1743 after adapting
-1Cat's collective and Split-D mechanisms. The same host's existing 1Cat 1.5.1 measures **98.25 / 102.51 tok/s** on the
-same 85K/MTP4 workload, with faster first token but different compute/KV precision and
-continuations. These are workload-aligned results, not an equal-quality comparison.
+1Cat's collective and Split-D mechanisms.
 TP4 normal, prefix and actual-85K Graph/eager state checks pass. Split-D and the experimental
 profiles can change output; no current-combination GPQA was run. On the separate **300 W** host,
 the same 85K/MTP4 fixture now measures **322.138 / 322.218 tok/s** (mean **322.178**), with
@@ -32,6 +30,14 @@ Maintainer's personal experience: “It feels in the same tier as FP8.”
 The authors report GPQA-D 90.91% versus BF16 91.41%, and AIME'26 100% for both.
 These are external source-checkpoint results, not our V100 conversion scores or proof of
 losslessness. [Sources, independent comparison and limitations](docs/model-quality.md).
+
+## v0.2.2 · QUASAR on one 16 GB V100
+
+One V100-SXM2 16 GB now runs QUASAR NVFP4 text with MTP4. On the same 85,000-token code input,
+cold prefill rose from **374.5 to 939.0 tok/s** and committed decode from **87.4 to 113.9 tok/s**.
+The baseline was an earlier single-card development build. The 9,472-token GPU window retrieves
+older KV from host RAM. Retrieval and experimental arithmetic can change output. Quality has
+not been evaluated for this profile. [Single-card launch command](docs/prebuilt.md#single-v100-16-gb)
 
 ## v0.2.1: TP2 / TP4 concurrency and serving fixes
 
@@ -55,13 +61,17 @@ The **85K C1/C2/C4/C8 matrix** reports actual batch and whole-wave latency as we
 decode. At 180K shared KV, only two 85K requests fit together, so offered C8 is not eight
 simultaneous decode streams. C8 reaches **317.8 / 200.3 / 198.2 tok/s** for TP4 NVLink,
 TP2 NVLink and local PCIe TP2, respectively, with mean actual batches of about **1.23**.
-The same-host **1Cat 1.5.1** control uses an existing AWQ INT4 /
-FP16 / E4M3-KV checkpoint; its HTTP token-ID windows are reported separately from NInfer's
-QUASAR NVFP4 / BF16 / INT8-G64 executor timing. These are speed references with different
-numerical profiles, not equal-quality comparisons.
+The same-host control is now **1Cat 1.5.2 / QUASAR NVFP4 / MTP4**, with all eight
+2K/85K × C1/C2/C4/C8 cases measured. It uses FP16 activations / E4M3 KV; its HTTP
+token-ID windows are reported separately from NInfer's BF16 / INT8-G64 executor timing.
+These are speed references with different numerical profiles, not equal-quality comparisons.
 For 2K/C8, the common decode windows measure **1160.9 tok/s** for NInfer TP4's sampled
-executor window and **588.3 tok/s** for 1Cat's SSE window; whole-wave output rates are
-**444.6 / 338.8 tok/s**, respectively. The timing windows and formats differ as detailed below.
+executor window and **549.96 / 552.96 tok/s** for 1Cat's two SSE waves (mean **551.46**).
+Whole-wave output rates are **444.6** for NInfer and **169.02 / 170.49 tok/s** for 1Cat.
+At 85K/C8 neither engine has a common decode window across all submitted requests.
+With a 128-token per-request prefill cap, 1Cat measures **92.17 tok/s over the union of
+active decode lifetimes**, not eight simultaneously decoding; the whole wave takes **322.04 s**.
+The timing windows, scheduling and KV capacities are documented separately.
 [Full matrices, acceptance, source comparison and method](docs/performance.md#tp4-concurrent-packed-batch-decode-2026-11-05).
 
 ![Complete-code concurrency measurements](docs/assets/tp4-concurrency/quasar-concurrency.svg)
@@ -279,7 +289,9 @@ env LD_LIBRARY_PATH="$PWD/build/_deps/install/lib:/usr/local/cuda-12.8/lib64${LD
 ```
 
 For DFlash7 use capacity 98304, chunk 1024 and `--spec dflash --draft-tokens 7`, omitting
-`--lm-head-draft`. Output is bounded by remaining context.
+`--lm-head-draft`. TP2 DFlash also admits the default-off `--volta-long-attention`
+and `--volta-fast-decode` experiments; both can change output and acceptance.
+[DFlash measurements and limits](docs/performance.md). Output is bounded by remaining context.
 For CLI use `build-v100/apps/ninfer` with the same inference flags and `--prompt TEXT --max-new N`.
 Installed GPU count does not fix runtime width: `--tp 2 --devices 4,6` selects a pair on an
 eight-card host. With `CUDA_VISIBLE_DEVICES=4,6`, use logical devices `0,1`.
