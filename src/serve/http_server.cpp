@@ -132,7 +132,8 @@ httplib::Server::HandlerResponse handle_unrendered_http_error(const ServeOptions
 HttpServer::HttpServer(ServeOptions options)
     : options_(std::move(options)),
       response_store_(options_.response_store_max_records, options_.response_store_max_bytes),
-      request_jsonl_(options_.request_log_jsonl, options_.artifact_path) {
+      request_jsonl_(options_.request_log_jsonl, options_.artifact_path),
+      console_api_(options_.request_log_jsonl) {
     const std::size_t queued_requests =
         static_cast<std::size_t>(options_.max_concurrency) + options_.max_pending_requests;
     const std::size_t worker_count = queued_requests + 1;
@@ -218,6 +219,30 @@ void HttpServer::stop_stats_reporter() {
 }
 
 void HttpServer::register_routes() {
+    // Embedded console: static files under /console/ and two read-only JSON
+    // endpoints. Mounted on a sub-path so the GET API routes below are not
+    // shadowed (httplib serves mounted files before regular routes).
+    if (!options_.console_dir.empty()) {
+        server_.set_mount_point("/console", options_.console_dir);
+
+        // Make the base URL open the console directly. A redirect (rather than a
+        // mount at "/") keeps the static-file handler from shadowing the JSON
+        // API routes registered below.
+        server_.Get("/", [](const httplib::Request&, httplib::Response& res) {
+            res.status = 302;
+            res.set_header("Location", "/console/");
+        });
+
+        server_.Get("/console/api/overview",
+                    [this](const httplib::Request& req, httplib::Response& res) {
+                        handle_console_overview(req, res);
+                    });
+        server_.Get("/console/api/log",
+                    [this](const httplib::Request& req, httplib::Response& res) {
+                        handle_console_log(req, res);
+                    });
+    }
+
     server_.set_error_handler([this](const httplib::Request& request, httplib::Response& response) {
         return handle_unrendered_http_error(options_, request, response);
     });
@@ -233,7 +258,15 @@ void HttpServer::register_routes() {
     }
 
     server_.set_pre_routing_handler([this](const httplib::Request& req, httplib::Response& res) {
-        if (options_.api_key.empty() || req.path == "/health" || req.method == "OPTIONS") {
+        // The console is a read-only local dashboard: its static files, overview
+        // and log tail carry no generation capability and stay reachable without
+        // the API key, mirroring /health. Model load/offload still require auth
+        // through /ninfer/model/*.
+        const bool console_read =
+            req.method == "GET" &&
+            (req.path == "/" || req.path == "/console" || req.path.rfind("/console/", 0) == 0);
+        if (options_.api_key.empty() || req.path == "/health" || req.method == "OPTIONS" ||
+            console_read) {
             return httplib::Server::HandlerResponse::Unhandled;
         }
         // Accept both the OpenAI-style bearer token and the Anthropic-style
@@ -361,6 +394,36 @@ void HttpServer::register_routes() {
     server_.Post("/v1/messages", [this](const httplib::Request& req, httplib::Response& res) {
         handle_messages(req, res);
     });
+}
+
+ConsoleEngineStats HttpServer::console_engine_stats() const {
+    ConsoleEngineStats snapshot;
+    snapshot.attached  = service_ != nullptr;
+    snapshot.model_id  = public_model_id_;
+    if (service_ == nullptr) {
+        return snapshot;
+    }
+    const ModelResidency residency = service_->model_residency();
+    const ninfer::RuntimeStats stats = service_->runtime_stats();
+    snapshot.residency_state         = residency.state;
+    snapshot.retained_host_bytes     = residency.retained_host_bytes;
+    snapshot.computed_prefill_tokens = stats.computed_prefill_tokens;
+    snapshot.committed_decode_tokens = stats.committed_decode_tokens;
+    snapshot.running_requests        = stats.running_requests;
+    snapshot.prefilling_requests     = stats.prefilling_requests;
+    snapshot.decode_ready_requests   = stats.decode_ready_requests;
+    snapshot.waiting_requests        = stats.waiting_requests;
+    return snapshot;
+}
+
+void HttpServer::handle_console_overview(const httplib::Request&, httplib::Response& res) {
+    const nlohmann::json body = console_api_.overview(options_, console_engine_stats());
+    res.set_content(body.dump(), "application/json");
+}
+
+void HttpServer::handle_console_log(const httplib::Request&, httplib::Response& res) const {
+    const nlohmann::json body = console_api_.log_tail(80);
+    res.set_content(body.dump(), "application/json");
 }
 
 void HttpServer::handle_models(const httplib::Request&, httplib::Response& res) const {

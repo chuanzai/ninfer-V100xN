@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ninfer 控制台</title>
+<link rel="stylesheet" href="app.css">
+<script>
+  try {
+    document.documentElement.dataset.theme = localStorage.getItem("ninfer.theme") || "dark";
+  } catch (e) {}
+</script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">n</span><span>ninfer</span><span class="brand-sub">控制台</span></div>
+  <nav class="tabs" role="tablist" aria-label="视图切换">
+    <button class="tab active" data-view="chat" role="tab" aria-selected="true">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 4v-4H4z"/></svg><span>对话</span></button>
+    <button class="tab" data-view="monitor" role="tab" aria-selected="false">
+      <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg><span>监控</span></button>
+    <button class="tab" data-view="about" role="tab" aria-selected="false">
+      <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>关于</span></button>
+  </nav>
+  <div class="topbar-right">
+    <span class="pill" id="statusPill" data-state="loading"><i></i><span id="statusText">连接中…</span></span>
+    <button class="btn ghost" id="unloadBtn" disabled><span id="unloadLabel">卸载模型</span></button>
+    <button class="btn icon" id="themeBtn" title="切换深浅主题" aria-label="切换深浅主题">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+  <!-- 对话 -->
+  <section class="view active" id="view-chat">
+    <aside class="chat-sidebar" id="chatSidebar">
+      <div class="side-head"><span>会话</span><button class="btn small" id="newChatBtn">新建对话</button></div>
+      <div class="chat-list" id="chatList"></div>
+      <div class="side-foot">会话保存在本机浏览器，不上传</div>
+    </aside>
+
+    <div class="chat-main">
+      <div class="messages" id="messages"></div>
+      <div class="composer-wrap">
+        <form class="composer" id="composer">
+          <button type="button" class="btn icon" id="attachBtn" title="附加图片" aria-label="附加图片">＋</button>
+          <textarea id="prompt" rows="1" placeholder="向 ninfer 发送消息…" aria-label="消息输入框"></textarea>
+          <button type="submit" class="btn primary send" id="sendBtn">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></svg><span>发送</span>
+          </button>
+        </form>
+        <input type="file" id="imageInput" accept="image/*" multiple hidden>
+        <div class="composer-note" id="composerNote">Enter 发送 · Shift+Enter 换行 · 可选择图片</div>
+      </div>
+    </div>
+
+    <aside class="settings" id="settings">
+      <div class="side-head"><span>生成设置</span><button class="btn icon small" id="closeSettingsBtn" title="收起" aria-label="收起设置">×</button></div>
+      <div class="field"><label>API 密钥 <span class="hint">仅存本机</span></label><input type="password" id="apiKey" placeholder="服务未设密钥可留空" autocomplete="off"></div>
+      <div class="field"><label>思考强度</label>
+        <select id="effort">
+          <option value="none">关闭</option>
+          <option value="low">低</option>
+          <option value="medium">中</option>
+          <option value="xhigh">极高（默认）</option>
+        </select>
+        <span class="hint">Qwen3.8 可用档位：关闭 / 低 / 中 / 极高</span>
+      </div>
+      <div class="field"><label>温度 <b id="temperatureOut">0.60</b></label><input type="range" id="temperature" min="0" max="2" step="0.05" value="0.6"></div>
+      <div class="field"><label>核采样 Top-p <b id="topPOut">0.80</b></label><input type="range" id="topP" min="0" max="1" step="0.05" value="0.8"></div>
+      <div class="field"><label>候选数 Top-k <b id="topKOut">20</b></label><input type="range" id="topK" min="0" max="100" step="1" value="20"></div>
+      <div class="field"><label>最大生成长度</label><input type="number" id="maxTokens" min="1" max="131072" value="4096"></div>
+      <div class="field check"><label><input type="checkbox" id="streamChk" checked> 流式输出</label></div>
+      <button class="btn ghost wide" id="clearChatBtn">清空当前会话</button>
+      <p class="hint block">设置保存在浏览器本地，作为后续请求的默认参数。</p>
+    </aside>
+  </section>
+
+  <!-- 监控 -->
+  <section class="view" id="view-monitor" hidden>
+    <div class="monitor">
+      <div class="card state-card" id="monitorState">
+        <div class="state-card__head">
+          <span class="state-label">模型状态</span>
+          <div class="badges" id="stateBadges">
+            <span class="badge" data-s="idle">空闲</span>
+            <span class="badge" data-s="unloaded">已卸载</span>
+            <span class="badge" data-s="reading">读取提示</span>
+            <span class="badge" data-s="generating">生成中</span>
+            <span class="badge" data-s="queued">排队中</span>
+            <span class="badge" data-s="error">出错</span>
+          </div>
+          <span class="state-detail" id="stateDetail"></span>
+        </div>
+        <div class="state-card__row"><span id="stateLabel">—</span><span class="hint" id="stateHint"></span></div>
+        <div class="state-progress"><i id="stateBar"></i></div>
+      </div>
+
+      <div class="metric-grid" id="metricGrid"></div>
+
+      <div class="card">
+        <div class="card-head"><h3>吞吐量</h3><span class="hint" id="throughputNote">最近值</span></div>
+        <div class="throughput-head">
+          <div class="tp-stat decode"><span><i class="dot decode"></i>解码</span><strong id="throughputDecode">—</strong><small>tok/s</small></div>
+          <div class="tp-stat prefill"><span><i class="dot prefill"></i>预填充</span><strong id="throughputPrefill">—</strong><small>tok/s</small></div>
+        </div>
+        <div class="chart-wrap">
+          <svg id="throughputChart" viewBox="0 0 600 160" preserveAspectRatio="none"></svg>
+          <span class="chart-tick decode top" id="tpTickDecodeMax">—</span>
+          <span class="chart-tick decode bottom">0</span>
+          <span class="chart-tick prefill top" id="tpTickPrefillMax">—</span>
+          <span class="chart-tick prefill bottom">0</span>
+        </div>
+        <div class="chart-axis"><span>左轴 解码 · 右轴 预填充</span><span>现在</span></div>
+      </div>
+
+      <div class="panel-grid">
+        <div class="card ctx-card">
+          <div class="card-head"><h3>上下文填充</h3><span class="hint">最近一次请求</span></div>
+          <div class="ctx-gauge">
+            <svg class="ctx-gauge-svg" viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="ctx-track" cx="60" cy="60" r="50"></circle>
+              <circle class="ctx-seg cached" id="ctxSegCached" cx="60" cy="60" r="50"></circle>
+              <circle class="ctx-seg reading" id="ctxSegRead" cx="60" cy="60" r="50"></circle>
+              <circle class="ctx-seg answer" id="ctxSegAnswer" cx="60" cy="60" r="50"></circle>
+            </svg>
+            <div class="ctx-gauge-label"><strong id="ctxPct">—</strong><span id="ctxSub">—</span></div>
+          </div>
+          <ul class="ctx-legend">
+            <li id="ctxRowCached"><i class="ctx-key cached"></i><span>已缓存</span><b id="ctxLegCached">—</b></li>
+            <li id="ctxRowRead"><i class="ctx-key reading"></i><span>读取中</span><b id="ctxLegRead">—</b></li>
+            <li id="ctxRowAnswer"><i class="ctx-key answer"></i><span>回答</span><b id="ctxLegAnswer">—</b></li>
+            <li><i class="ctx-key free"></i><span>空闲</span><b id="ctxLegFree">—</b></li>
+          </ul>
+          <div class="bar-row"><span>前缀缓存预算</span><b id="slotsText">—</b></div>
+          <div class="state-progress"><i id="slotsBar"></i></div>
+          <div class="bar-row"><span>系统内存</span><b id="ramText">—</b></div>
+          <div class="state-progress"><i id="ramBar"></i></div>
+          <div class="bar-row"><span>显卡温度</span><b id="tempText">—</b></div>
+          <div class="state-progress warm"><i id="tempBar"></i></div>
+          <p class="kv-note" id="ctxNote"></p>
+        </div>
+
+        <div class="card req-card">
+          <div class="card-head"><h3>最近请求</h3><button class="btn small" id="reqAllBtn" hidden>显示全部</button></div>
+          <div class="table-scroll" id="reqWrap"><table class="req-table">
+            <thead><tr><th>时间</th><th>状态</th><th class="num">提示词</th><th class="num">复用</th><th class="num">输出</th><th class="num">预填充 t/s</th><th class="num">解码 t/s</th><th class="num">首字延迟</th><th class="num">耗时</th></tr></thead>
+            <tbody id="requestRows"></tbody>
+          </table></div>
+          <p class="req-totals" id="requestTotals"></p>
+        </div>
+      </div>
+
+      <div class="card" id="ccCard">
+        <div class="card-head"><h3>会话缓存 / 前缀复用</h3><span class="hint" id="ccSummary"></span></div>
+        <dl class="facts" id="ccFacts"></dl>
+        <p class="kv-note" id="ccNote"></p>
+      </div>
+
+      <div class="card" id="mcpCard" hidden>
+        <div class="card-head"><h3>MCP 服务</h3><span class="hint" id="mcpSummary"></span></div>
+        <div id="mcpList" class="flags"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>引擎日志尾部</h3><button class="btn small" id="refreshLogBtn">刷新</button></div>
+        <pre class="log-tail" id="logTail">加载中…</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- 关于 -->
+  <section class="view" id="view-about" hidden>
+    <div class="about">
+      <div class="card"><h3>模型与引擎</h3><dl id="aboutModel" class="kv-list"></dl></div>
+      <div class="card"><h3>主机</h3><dl id="aboutMachine" class="kv-list"></dl></div>
+      <div class="card wide"><h3>连接工具</h3>
+        <p class="hint">任何兼容 OpenAI 协议的客户端填写地址即可，模型名从服务自动读取。</p>
+        <div class="endpoint"><code id="openaiEndpoint">http://192.168.11.6:8080/v1</code><button class="btn small copy" data-copy="openaiEndpoint">复制</button></div>
+        <div class="endpoint"><code id="anthropicEndpoint">http://192.168.11.6:8080</code><button class="btn small copy" data-copy="anthropicEndpoint">复制</button></div>
+        <div class="endpoint"><code id="healthEndpoint">http://192.168.11.6:8080/health</code><button class="btn small copy" data-copy="healthEndpoint">复制</button></div>
+      </div>
+      <div class="card wide"><h3>启动参数</h3><div id="aboutFlags" class="flags"></div></div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

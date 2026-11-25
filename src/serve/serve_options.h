@@ -26,6 +26,9 @@ struct ServeOptions {
     std::string api_key;                          // empty => no auth
     std::optional<std::string> model_id_override; // unset => artifact identity.model_id
     std::string request_log_jsonl;                // empty => structured request logging disabled
+    // Directory holding the embedded console (index.html/app.css/app.js). Empty disables the
+    // console; the HTTP server mounts it at /console so it cannot shadow the GET API routes.
+    std::string console_dir;
     std::uint32_t max_context              = 8192;
     // Rotary regime, mirroring the CLI. `--rope yarn` raises the ceiling `--max-context` is
     // checked against to `--yarn-origin x --yarn-factor`; Engine performs that check.

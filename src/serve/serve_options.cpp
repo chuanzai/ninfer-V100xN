@@ -120,7 +120,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--devices N,...] [--storage-device N] "
            "[--max-request-mib N] [--media-cache-mib N] [--media-live-mib N] "
            "[--media-preprocess-threads N] "
-           "[--request-log-jsonl FILE] "
+           "[--request-log-jsonl FILE] [--console-dir DIR] "
            "[--response-store-max-records N] [--response-store-max-mib N] "
            "[--kv-dtype bf16|int8] [--spec mtp|dflash --draft-tokens N] "
            "[--ram-kv-window N] [--ram-kv-budget-bytes N] "
@@ -145,6 +145,8 @@ std::string serve_usage_text(const char* argv0) {
            "       --media-live-mib defaults to 2048 and bounds all live BF16 patch payloads\n"
            "       --media-preprocess-threads defaults to 0 (auto, at most 16 workers)\n"
            "       --request-log-jsonl appends full-precision server/request records\n"
+           "       --console-dir DIR mounts the embedded management console at /console/ and /console\n"
+           "       (index.html, app.css, app.js); omit to disable the console\n"
            "       --model-id overrides the artifact identity.model_id reported by the server\n"
            "       Responses state is process-local and bounded to 1024 records / 256 MiB by "
            "default\n"
@@ -324,6 +326,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.request_log_jsonl = require_value("--request-log-jsonl");
             if (options.request_log_jsonl.empty()) {
                 throw std::invalid_argument("--request-log-jsonl must not be empty");
+            }
+        } else if (arg == "--console-dir") {
+            options.console_dir = require_value("--console-dir");
+            if (options.console_dir.empty()) {
+                throw std::invalid_argument("--console-dir must not be empty");
             }
         } else if (arg == "--response-store-max-records") {
             const int records = parse_nonnegative_int(require_value("--response-store-max-records"),

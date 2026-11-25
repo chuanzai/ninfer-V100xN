@@ -102,6 +102,8 @@ int main() {
                       "Vision token budget default changed");
     failures += check(defaults.request_log_jsonl.empty(),
                       "request JSONL logging is not disabled by default");
+    failures += check(defaults.console_dir.empty(),
+                      "embedded console is not disabled by default");
     failures += check(defaults.log_stats_interval_ms == 5000,
                       "periodic throughput interval default mismatch");
     failures += check(defaults.default_max_tokens == 65536,
@@ -328,6 +330,13 @@ int main() {
     failures +=
         check(serve_usage_text("ninfer-serve").find("--request-log-jsonl") != std::string::npos,
               "serve help omits --request-log-jsonl");
+
+    const ServeOptions with_console =
+        parse({"ninfer-serve", "model.ninfer", "--console-dir", "web/console"});
+    failures += check(with_console.console_dir == "web/console",
+                      "--console-dir did not preserve its path");
+    failures += check(serve_usage_text("ninfer-serve").find("--console-dir") != std::string::npos,
+                      "serve help omits --console-dir");
     bool secret_present    = false;
     bool redaction_present = false;
     for (const std::string& argument : logged.startup_argv) {

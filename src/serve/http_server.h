@@ -1,5 +1,6 @@
 #pragma once
 
+#include "serve/console_api.h"
 #include "serve/generation_service.h"
 #include "serve/response_store.h"
 #include "serve/request_log.h"
@@ -51,6 +52,9 @@ private:
     void handle_response_compact(const httplib::Request& req, httplib::Response& res);
     void handle_models(const httplib::Request& req, httplib::Response& res) const;
     void handle_model(const httplib::Request& req, httplib::Response& res) const;
+    void handle_console_overview(const httplib::Request& req, httplib::Response& res);
+    void handle_console_log(const httplib::Request& req, httplib::Response& res) const;
+    [[nodiscard]] ConsoleEngineStats console_engine_stats() const;
 
     // The process-wide console logger serializes lines from request and reporter threads.
     void log_line(const std::string& line);
@@ -67,6 +71,7 @@ private:
     std::string public_model_id_;
     ResponseStore response_store_;
     JsonlRequestLog request_jsonl_;
+    ConsoleApi console_api_;
     httplib::Server server_;
     std::atomic<std::uint64_t> request_seq_{0};
     std::mutex stats_mutex_;
