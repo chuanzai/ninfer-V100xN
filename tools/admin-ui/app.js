@@ -141,6 +141,7 @@
   function syncSettings() {
     const s = state.settings;
     $("apiKey").value = s.apiKey;
+    if ($("aboutApiKey")) $("aboutApiKey").value = s.apiKey;
     $("effort").value = s.effort;
     $("temperature").value = s.temperature;
     $("topP").value = s.topP;
@@ -546,35 +547,32 @@
   function renderAbout(ov) {
     const h = ov.health || {};
     const m = ov.machine || {};
-    const svc = ov.service || {};
-    const pairs = (obj) => Object.entries(obj).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+    const pairs = (obj) => Object.entries(obj)
+      .filter(([, v]) => v != null && v !== "")
+      .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
     $("aboutModel").innerHTML = pairs({
-      "服务": h.service || "ninfer",
-      "模型": h.model || "—",
-      "上下文上限": h.max_context ? `${h.max_context.toLocaleString()} tokens` : "—",
-      "张量并行": h.tp ?? "—",
-      "最大并发": h.max_concurrency ?? "—",
+      "模型": h.model || ov.engine?.model || "—",
+      "上下文": h.max_context ? `${fmtNum(h.max_context)} tokens` : "—",
+      "KV 量化": ov.engine?.kv || "—",
+      "推测解码": ov.engine?.spec === "mtp" ? `MTP · 最多 ${Math.max(0, (ov.engine.draft_tokens || 4) - 1)} tokens` : "未启用",
       "图片输入": h.images ? "开启" : "关闭",
-      "接口密钥": h.api_key ? "已设置" : "未设置",
+      "张量并行": h.tp != null ? `TP ${h.tp}` : "—",
+      "最大并发": h.max_concurrency ?? "—",
       "模型驻留": (ov.residency || {}).state || "—",
-      "服务状态": `${svc.active || "—"} / ${svc.sub || "—"}`,
-      "启动时间": svc.since || "—",
-      "重启次数": svc.restarts ?? "—",
+      "接口密钥": h.api_key ? "已设置" : "未设置",
     });
     $("aboutMachine").innerHTML = pairs({
       "主机": m.host || "—",
-      "显卡": (m.gpus || []).map((g) => `${g.name} #${g.index}`).join(" / ") || "—",
-      "显存": (m.gpus || []).map((g) => `${Math.round(g.vram_used_mib)} / ${Math.round(g.vram_total_mib)} MiB`).join(" / ") || "—",
-      "内存": m.ram?.total_bytes ? `${(m.ram.used_bytes / 2 ** 30).toFixed(1)} / ${(m.ram.total_bytes / 2 ** 30).toFixed(1)} GiB` : "—",
+      "显卡": (m.gpus || []).map((g) => `${g.name}${g.vram_total_mib ? ` · ${fmtNum(g.vram_total_mib / 1024, 0)} GB` : ""}`).join(" / ") || "—",
+      "CPU": String(m.threads || "").trim() ? `${String(m.threads).trim()} 线程` : (ov.hardware_static?.threads ? `${ov.hardware_static.threads} 线程` : "—"),
+      "内存": m.ram?.total_bytes ? `${fmtNum(m.ram.total_bytes / 2 ** 30, 0)} GB` : "—",
     });
-    const flags = svc.flags || {};
-    $("aboutFlags").innerHTML = Object.entries(flags).map(([k, v]) =>
-      `<span class="flag"><b>${esc(k)}</b> ${esc(v === true ? "" : v)}</span>`).join("") || '<span class="hint">未读取到启动参数</span>';
 
-    const base = ov.base_url || location.origin.replace(/:\d+$/, ":8080");
+    const base = location.origin.replace(/:\d+$/, ":8080");
+    const modelName = h.model || ov.engine?.model || "—";
     $("openaiEndpoint").textContent = base + "/v1";
     $("anthropicEndpoint").textContent = base;
-    $("healthEndpoint").textContent = base + "/health";
+    $("aboutModelName").textContent = modelName;
   }
 
   function renderPill(ov) {
@@ -878,12 +876,24 @@
       state.reqShowAll = !state.reqShowAll;
       if (state.overview) renderRequests(state.overview.requests, state.overview.totals);
     });
+    $("aboutApiKey").addEventListener("input", () => {
+      state.settings.apiKey = $("aboutApiKey").value;
+      $("apiKey").value = state.settings.apiKey;
+      persistSettings();
+    });
     $("refreshLogBtn").addEventListener("click", refreshLog);
-    document.querySelectorAll(".copy").forEach((btn) =>
+    document.querySelectorAll("[data-copy]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         const text = $(btn.dataset.copy).textContent;
-        try { await navigator.clipboard.writeText(text); btn.textContent = "已复制"; setTimeout(() => btn.textContent = "复制", 1200); }
-        catch (e) { btn.textContent = "复制失败"; }
+        const isIcon = btn.classList.contains("copy-icon");
+        const original = isIcon ? "⧉" : "复制";
+        try {
+          await navigator.clipboard.writeText(text);
+          btn.textContent = isIcon ? "✓" : "已复制";
+        } catch (e) {
+          btn.textContent = isIcon ? "×" : "复制失败";
+        }
+        setTimeout(() => { btn.textContent = original; }, 1200);
       }));
   }
 

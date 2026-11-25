@@ -358,15 +358,41 @@ main { height: calc(100% - 60px); }
   font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all;
 }
 
-/* 关于 */
-.about { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); align-items: start; }
-.about .card { margin: 0; }
-.about .wide { grid-column: 1 / -1; }
-.kv-list { display: grid; grid-template-columns: max-content 1fr; gap: 9px 20px; margin: 4px 0 0; font-size: 13px; }
-.kv-list dt { color: var(--muted); }
-.kv-list dd { margin: 0; text-align: right; word-break: break-all; font-variant-numeric: tabular-nums; }
-.endpoint { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-.endpoint code { flex: 1; background: var(--panel-2); border: 1px solid var(--border-soft); padding: 9px 12px; border-radius: var(--radius-md); font-size: 12px; word-break: break-all; }
+/* 关于 — 对齐 Strata：单列全宽卡片 + 两列字段排版 */
+.about { max-width: min(100%, 1100px); }
+.about .card { display: flex; flex-direction: column; gap: 12px; }
+.about .card h3 { margin: 0; }
+.about .hint { margin: 0; }
+.facts {
+  display: grid; grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+  gap: 10px 24px; margin: 4px 0 0; font-size: 14px;
+}
+.facts dt { color: var(--muted); }
+.facts dd {
+  margin: 0; color: var(--text); font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere;
+}
+.facts dd code {
+  font: 400 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+}
+.copy-icon {
+  width: 26px; height: 26px; flex: none; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--panel-2); color: var(--muted);
+  cursor: pointer; display: inline-grid; place-items: center; font-size: 11px;
+}
+.copy-icon:hover { color: var(--accent-text); border-color: var(--accent); }
+.about-field { display: flex; flex-direction: column; gap: 8px; }
+.about-field label { font-size: 13px; color: var(--text); }
+.about-field input {
+  height: 40px; padding: 0 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-md); background: var(--panel); color: var(--text); outline: 0;
+}
+.about-field input:focus { border-color: var(--info); }
+@media (max-width: 700px) {
+  .facts { grid-template-columns: 1fr; gap: 3px; }
+  .facts dd { margin-bottom: 8px; }
+}
 .flags { display: flex; flex-wrap: wrap; gap: 7px; }
 .flag { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 10px; font-size: 11px; font-variant-numeric: tabular-nums; }
 .flag b { color: var(--accent-text); font-weight: 700; }

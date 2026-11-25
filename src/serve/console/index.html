@@ -173,15 +173,25 @@
   <!-- 关于 -->
   <section class="view" id="view-about" hidden>
     <div class="about">
-      <div class="card"><h3>模型与引擎</h3><dl id="aboutModel" class="kv-list"></dl></div>
-      <div class="card"><h3>主机</h3><dl id="aboutMachine" class="kv-list"></dl></div>
-      <div class="card wide"><h3>连接工具</h3>
-        <p class="hint">任何兼容 OpenAI 协议的客户端填写地址即可，模型名从服务自动读取。</p>
-        <div class="endpoint"><code id="openaiEndpoint">http://192.168.11.6:8080/v1</code><button class="btn small copy" data-copy="openaiEndpoint">复制</button></div>
-        <div class="endpoint"><code id="anthropicEndpoint">http://192.168.11.6:8080</code><button class="btn small copy" data-copy="anthropicEndpoint">复制</button></div>
-        <div class="endpoint"><code id="healthEndpoint">http://192.168.11.6:8080/health</code><button class="btn small copy" data-copy="healthEndpoint">复制</button></div>
+      <div class="card"><h3>模型与引擎</h3><dl id="aboutModel" class="facts"></dl></div>
+      <div class="card"><h3>本机</h3><dl id="aboutMachine" class="facts"></dl></div>
+      <div class="card">
+        <h3>连接工具</h3>
+        <p class="hint">兼容 OpenAI 或 Anthropic 协议的客户端填写这些地址即可。</p>
+        <dl class="facts" id="aboutApi">
+          <dt>OpenAI 地址</dt><dd><code id="openaiEndpoint">—</code><button class="copy-icon" data-copy="openaiEndpoint" title="复制" aria-label="复制">⧉</button></dd>
+          <dt>Anthropic 地址</dt><dd><code id="anthropicEndpoint">—</code><button class="copy-icon" data-copy="anthropicEndpoint" title="复制" aria-label="复制">⧉</button></dd>
+          <dt>模型名</dt><dd><code id="aboutModelName">—</code><button class="copy-icon" data-copy="aboutModelName" title="复制" aria-label="复制">⧉</button></dd>
+        </dl>
       </div>
-      <div class="card wide"><h3>启动参数</h3><div id="aboutFlags" class="flags"></div></div>
+      <div class="card">
+        <h3>设置</h3>
+        <div class="about-field">
+          <label for="aboutApiKey">API 密钥 <span class="hint">仅当服务启动时设置了密钥</span></label>
+          <input id="aboutApiKey" type="password" autocomplete="off" placeholder="无需设置">
+        </div>
+        <p class="hint">会话、设置与密钥只保存在本机浏览器。</p>
+      </div>
     </div>
   </section>
 </main>
